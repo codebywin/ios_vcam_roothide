@@ -1,0 +1,9 @@
+Package: com.la.toiday
+Name: VCAM iOS (Roothide)
+Version: 1.0.0
+Architecture: iphoneos-arm64e
+Description: Virtual Camera & Photo replacement for roothide jailbreak
+Maintainer: 
+Author:
+Section: Tweaks
+Depends: roothide (>= 0.0.1) | org.coolstar.ellekit | mobilesubstrate (>= 0.9.5000)
