@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>VCAM License Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Silkscreen:wght@700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #101010;
+    --dot: #1e1e1e;
+    --win: #1b1b1b;
+    --win2: #171717;
+    --bar: #2a2a2a;
+    --ink: #ececec;
+    --mute: #9a9a9a;
+    --line: #333;
+    --ok: #3ecf6e;
+    --warn: #e3a72f;
+    --bad: #ff6b5e;
+    --sel: #1b2e22;
+    --field: #111;
+  }
+
+  /* KHÓA HOÀN TOÀN CUỘN TỔNG (CẢ DỌC LẪN NGANG) */
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden !important; /* KHÔNG CHO CUỘN TỔNG */
+  }
+  body {
+    background: var(--bg) radial-gradient(var(--dot) 1px, transparent 1.2px) 0 0/6px 6px;
+    color: var(--ink);
+    font: 13px/1.4 "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 8px;
+  }
+
+  /* KHUNG CỬA SỔ CỐ ĐỊNH CHIỀU CAO VỪA KHÍT MÀN HÌNH */
+  .mobile-frame {
+    width: 100%;
+    max-width: 440px;
+    height: 96vh;
+    max-height: 840px;
+    background: linear-gradient(var(--win), var(--win2));
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* Cố định tuyệt đối khung ngoài */
+  }
+
+  /* macOS Titlebar */
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: var(--bar);
+    border-bottom: 1px solid var(--line);
+    position: relative;
+    flex-shrink: 0;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .bar .t {
+    position: absolute; left: 0; right: 0;
+    text-align: center; color: var(--mute);
+    font-size: 11px; pointer-events: none;
+  }
+
+  /* PHẦN CỐ ĐỊNH TRÊN CÙNG: KHÔNG CUỘN, LUÔN ĐỨNG YÊN */
+  .fixed-top {
+    flex-shrink: 0;
+    padding: 12px 14px 6px;
+  }
+  .logo {
+    font: 700 28px/1 Silkscreen, monospace;
+    letter-spacing: .03em;
+    text-align: center;
+    margin: 2px 0 3px;
+  }
+  .sub {
+    text-align: center;
+    color: var(--mute);
+    font-size: 11px;
+    margin-bottom: 12px;
+  }
+
+  .cmd {
+    font-weight: 700;
+    margin: 8px 0 4px;
+    font-size: 12px;
+  }
+  .cmd i {
+    color: var(--ok);
+    font-style: normal;
+    margin-right: 6px;
+  }
+
+  /* Stats grid gọn gàng */
+  .kv {
+    display: grid;
+    grid-template-columns: 86px 1fr;
+    row-gap: 2px;
+    font-size: 11.5px;
+    padding-left: 6px;
+  }
+  .kv span:nth-child(odd) { color: var(--mute); }
+  .ok { color: var(--ok); font-weight: 600; }
+  .bad { color: var(--bad); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+
+  .create-link {
+    display: inline-block;
+    color: var(--ink);
+    padding-left: 6px;
+    text-decoration: none;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 11.5px;
+  }
+  .create-link:hover { color: var(--ok); }
+
+  /* Form tạo key trượt mở */
+  .form-wrap {
+    background: #141414;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px;
+    margin: 6px 0 8px;
+  }
+  .pkg-btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .pkg-btns button {
+    background: #1f1f1f;
+    border: 1px solid var(--line);
+    color: var(--mute);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 10.5px;
+    cursor: pointer;
+  }
+  .pkg-btns button.on {
+    background: var(--sel);
+    border-color: var(--ok);
+    color: var(--ok);
+    font-weight: 700;
+  }
+  .input-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .input-grid input, .input-grid select {
+    background: var(--field);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 11px;
+    padding: 5px 8px;
+    width: 100%;
+  }
+  .go-btn {
+    grid-column: 1 / -1;
+    background: var(--ok);
+    color: #08130c;
+    border: none;
+    border-radius: 4px;
+    padding: 7px;
+    font-family: inherit;
+    font-weight: 700;
+    font-size: 11.5px;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .go-btn:hover { opacity: 0.9; }
+
+  /* Ô tìm kiếm */
+  .search-input {
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--field);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 11px;
+    margin: 6px 0 4px 0;
+  }
+  .search-input:focus {
+    outline: 1px solid var(--ok);
+  }
+
+  /* Tabs bộ lọc - Gập dòng tự nhiên, KHÔNG scroll ngang */
+  .filter-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px 8px;
+    padding: 2px 0 6px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .filter-grid button {
+    background: none;
+    border: none;
+    color: var(--mute);
+    font-family: inherit;
+    font-size: 11px;
+    padding: 2px 2px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .filter-grid button.on {
+    color: var(--ink);
+    font-weight: 700;
+    text-decoration: underline;
+    text-decoration-color: var(--ok);
+    text-underline-offset: 3px;
+    text-decoration-thickness: 2px;
+  }
+
+  /* KHU VỰC DUY NHẤT ĐƯỢC PHÉP CUỘN: DANH SÁCH KEY (FLEX: 1) */
+  .key-scroll-section {
+    flex: 1;
+    min-height: 0; /* Cho phép flexbox cuộn nội bộ chuẩn xác */
+    margin: 6px 14px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--field);
+    overflow-y: auto;   /* CHỈ CUỘN DỌC TRONG KHUNG NÀY */
+    overflow-x: hidden; /* TUYỆT ĐỐI KHÔNG CUỘN NGANG */
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Tùy chỉnh thanh cuộn Dark Mode */
+  .key-scroll-section::-webkit-scrollbar {
+    width: 6px;
+  }
+  .key-scroll-section::-webkit-scrollbar-track {
+    background: var(--field);
+  }
+  .key-scroll-section::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 4px;
+  }
+  .key-scroll-section::-webkit-scrollbar-thumb:hover {
+    background: var(--ok);
+  }
+
+  /* Từng hàng Key */
+  .key-row {
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    width: 100%;
+    transition: background 0.1s;
+  }
+  .key-row:last-child { border-bottom: none; }
+  .key-row:hover, .key-row.open { background: var(--sel); }
+  
+  .row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 2px;
+  }
+  .key-code {
+    font-weight: 700;
+    font-size: 11.5px;
+    color: var(--ink);
+    word-break: break-all;
+  }
+  .key-status {
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  
+  .row-bot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    color: var(--mute);
+  }
+  .row-bot span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .row-bot span:last-child {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Khối chi tiết bung mở khi nhấp xem */
+  .key-detail {
+    background: var(--sel);
+    padding: 8px 6px;
+    border-top: 1px dashed var(--line);
+    font-size: 10.5px;
+    display: grid;
+    grid-template-columns: 66px 1fr;
+    row-gap: 3px;
+    word-break: break-all;
+    margin-top: 6px;
+  }
+  .detail-acts {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+    margin-top: 6px;
+  }
+  .detail-acts button {
+    background: var(--win);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 5px 2px;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--ink);
+    cursor: pointer;
+    text-align: center;
+  }
+  .detail-acts button:hover {
+    border-color: var(--ok);
+    color: var(--ok);
+  }
+  .detail-acts button.del-btn {
+    color: var(--bad);
+  }
+
+  /* Footer cố định nhỏ */
+  .fixed-bottom {
+    flex-shrink: 0;
+    text-align: center;
+    font-size: 9.5px;
+    color: var(--mute);
+    padding: 0 12px 8px;
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--ink);
+    color: var(--bg);
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.2s;
+    z-index: 100;
+  }
+  .toast.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+</style>
+</head>
+<body>
+
+<div class="mobile-frame">
+  <!-- 1. macOS Titlebar (Cố định) -->
+  <div class="bar">
+    <span class="dot" style="background:#ff5f57"></span>
+    <span class="dot" style="background:#febc2e"></span>
+    <span class="dot" style="background:#28c840"></span>
+    <span class="t">vcam-license</span>
+  </div>
+
+  <!-- 2. PHẦN CỐ ĐỊNH TRÊN CÙNG: KHÔNG CUỘN, LUÔN ĐỨNG YÊN -->
+  <div class="fixed-top">
+    <div class="logo">VCAM</div>
+    <div class="sub">Quản lý license iOS · Cloudflare Worker</div>
+
+    <!-- Status -->
+    <div class="cmd"><i>$</i>vcam status</div>
+    <div class="kv" id="statsArea">
+      <!-- Cập nhật tự động qua JS -->
+    </div>
+
+    <!-- Create link -->
+    <div class="cmd"><i>$</i>vcam create</div>
+    <a class="create-link" id="toggleCreateBtn" onclick="toggleCreateForm()">&gt; Tạo key mới (gói 30d, 90d, vĩnh viễn...)</a>
+
+    <!-- Form tạo key ẩn/hiện -->
+    <div id="createFormWrap" class="form-wrap" style="display: none;">
+      <div class="pkg-btns" id="pkgSelector">
+        <button data-dur="30" class="on">30 ngày</button>
+        <button data-dur="90">90 ngày</button>
+        <button data-dur="365">365 ngày</button>
+        <button data-dur="0">Vĩnh viễn</button>
+        <button data-dur="1">1 ngày (test)</button>
+      </div>
+      <div class="input-grid">
+        <input type="text" id="newBuyer" placeholder="Tên khách / Người mua">
+        <select id="newPlat">
+          <option>Zalo</option>
+          <option>Telegram</option>
+          <option>Facebook</option>
+          <option>Khác</option>
+        </select>
+        <input type="text" id="newPrefix" value="VCAM" placeholder="Prefix" maxlength="6">
+        <input type="text" id="newNote" placeholder="Ghi chú">
+        <button class="go-btn" onclick="submitCreateKey()">⚡ Tạo và lưu key</button>
+      </div>
+    </div>
+
+    <!-- Keys List Header -->
+    <div class="cmd"><i>$</i>vcam keys --list</div>
+
+    <!-- Ô tìm kiếm -->
+    <input type="search" id="searchInput" class="search-input" placeholder="Tìm key, người mua, HWID, ghi chú…" oninput="filterAndRender()">
+
+    <!-- Bộ lọc Wrap không scroll ngang -->
+    <div class="filter-grid" id="filterTabs">
+      <!-- Cập nhật tự động qua JS -->
+    </div>
+  </div>
+
+  <!-- 3. VÙNG DUY NHẤT CUỘN: DANH SÁCH KEY (CHỈ CUỘN DỌC TẠI ĐÂY) -->
+  <div class="key-scroll-section" id="keysListContainer">
+    <!-- Render bởi JS -->
+  </div>
+
+  <!-- 4. Ghi chú dưới cùng cố định -->
+  <div class="fixed-bottom">
+    ↕ Chỉ cuộn danh sách key ở trên • Cố định toàn trang • Không cuộn ngang
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+  // DỮ LIỆU THỰC TẾ TRÊN CLOUDFLARE KV
+  let data = [
+  {
+    "key": "90DAY-7XRZ-7NJZ-NEEP",
+    "buyer": "PISCES",
+    "plat": "Telegram",
+    "acct": "PISCES",
+    "dur_label": "90 ngày",
+    "duration_days": 90,
+    "created": 1791216080986,
+    "exp": null,
+    "dev": "iPhone",
+    "sn": "6aa0a58d…",
+    "ip": "—",
+    "loc": "Bắc Ninh, VN",
+    "st": "active",
+    "note": "PISCES"
+  },
+  {
+    "key": "LONG-JL5F-J7LW-G8K4",
+    "buyer": "Khách hàng",
+    "plat": "Zalo",
+    "acct": "",
+    "dur_label": "30 ngày",
+    "duration_days": 30,
+    "created": 1790943261223,
+    "exp": 1793547513176,
+    "dev": "iPhone",
+    "sn": "f39cc654…",
+    "ip": "2001:ee0:5006:2c0:fcb7:fb6e:44cd:bf23",
+    "loc": "Ho Chi Minh City, VN",
+    "st": "active",
+    "note": ""
+  },
+  {
+    "key": "90DAY-DBNV-E7EA-LNW7",
+    "buyer": "Pisces",
+    "plat": "Zalo",
+    "acct": "",
+    "dur_label": "90 ngày",
+    "duration_days": 90,
+    "created": 1790667695962,
+    "exp": 1800815707531,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "2401:d800:300:3d51:8db6:913f:149d:1e6b",
+    "loc": "Haiphong, VN",
+    "st": "active",
+    "note": "Pisces"
+  },
+  {
+    "key": "PISCES-5BMM-4SD4-THNV",
+    "buyer": "PISCES-90NGAY",
+    "plat": "Zalo",
+    "acct": "",
+    "dur_label": "90 ngày",
+    "duration_days": 90,
+    "created": 1789542583656,
+    "exp": 1800815693709,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "2401:d800:300:3d51:d13e:293f:cab6:c1c0",
+    "loc": "Haiphong, VN",
+    "st": "active",
+    "note": "PISCES-90NGAY"
+  },
+  {
+    "key": "W09-FA4LLTA",
+    "buyer": "W09",
+    "plat": "Telegram",
+    "acct": "W09",
+    "dur_label": "365 Ngày",
+    "duration_days": 30,
+    "created": 1792760841000,
+    "exp": 1824296923786,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "154.198.4.66",
+    "loc": "Baclaran, PH",
+    "st": "active",
+    "note": "W09"
+  },
+  {
+    "key": "CAKK-T8RL3K9",
+    "buyer": "CAKK",
+    "plat": "Telegram",
+    "acct": "@hasuki04",
+    "dur_label": "30 Ngày",
+    "duration_days": 30,
+    "created": 1792700183000,
+    "exp": 1795299319585,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "2404:c0:960b:56c:2c02:b2f:179e:dca0",
+    "loc": "Medan, ID",
+    "st": "active",
+    "note": "@hasuki04"
+  },
+  {
+    "key": "HOANG-9VKAMKJ",
+    "buyer": "Khách hàng",
+    "plat": "Telegram",
+    "acct": "",
+    "dur_label": "1 Giờ",
+    "duration_days": 30,
+    "created": 1792473737000,
+    "exp": 1792492588019,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "27.67.102.76",
+    "loc": "Hanoi, VN",
+    "st": "locked",
+    "note": ""
+  },
+  {
+    "key": "HOANG-VQBMRY2",
+    "buyer": "HOANG",
+    "plat": "Telegram",
+    "acct": "HOANG",
+    "dur_label": "1 Ngày",
+    "duration_days": 30,
+    "created": 1792473719000,
+    "exp": 1792561328449,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "27.67.102.76",
+    "loc": "Hanoi, VN",
+    "st": "locked",
+    "note": "HOANG"
+  },
+  {
+    "key": "PISCES-3VH5GLS",
+    "buyer": "Khách hàng",
+    "plat": "Telegram",
+    "acct": "PISCES",
+    "dur_label": "30 Ngày",
+    "duration_days": 30,
+    "created": 1792344073000,
+    "exp": 1794936397708,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "2401:d800:22a:d795:5588:a254:7d3a:b90e",
+    "loc": "Ba Vì, VN",
+    "st": "active",
+    "note": "PISCES"
+  },
+  {
+    "key": "ANDREW-Z5UVYAQ",
+    "buyer": "Khách hàng",
+    "plat": "Telegram",
+    "acct": "Andrew",
+    "dur_label": "30 Ngày",
+    "duration_days": 30,
+    "created": 1792133912000,
+    "exp": 1794726020360,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "103.23.159.110",
+    "loc": "Huế, VN",
+    "st": "active",
+    "note": "Andrew"
+  },
+  {
+    "key": "WIN-3UPWXDA",
+    "buyer": "Khách hàng",
+    "plat": "Telegram",
+    "acct": "",
+    "dur_label": "Vĩnh viễn",
+    "duration_days": 30,
+    "created": 1792071195000,
+    "exp": 0,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "2402:800:6235:d7b9:d100:8a0f:be53:de5a",
+    "loc": "Huế, VN",
+    "st": "expired",
+    "note": ""
+  },
+  {
+    "key": "CAKK7P-76TDSXC",
+    "buyer": "CAKK",
+    "plat": "Telegram",
+    "acct": "@hasuki04",
+    "dur_label": "30 Ngày",
+    "duration_days": 30,
+    "created": 1792070511000,
+    "exp": 1794692622111,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "114.122.25.149",
+    "loc": "Medan, ID",
+    "st": "active",
+    "note": "CAKK"
+  },
+  {
+    "key": "CAKK-Z334DQB",
+    "buyer": "CAKK",
+    "plat": "Telegram",
+    "acct": "@hasuki04",
+    "dur_label": "30 Ngày",
+    "duration_days": 30,
+    "created": 1792004641000,
+    "exp": 1794697583801,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "114.5.146.12",
+    "loc": "Medan, ID",
+    "st": "active",
+    "note": "CAKK"
+  },
+  {
+    "key": "VCAM-TEST-1234-5678",
+    "buyer": "Kích hoạt tự động",
+    "plat": "Zalo",
+    "acct": "",
+    "dur_label": "30 Ngày",
+    "duration_days": 30,
+    "created": 1792620000000,
+    "exp": 1795001343487,
+    "dev": "—",
+    "sn": "chưa gắn",
+    "ip": "2402:800:6235:d7b9:4f7:9e3b:f79e:cd90",
+    "loc": "Huế, VN",
+    "st": "active",
+    "note": "Kích hoạt tự động"
+  }
+];
+
+  let activeFilter = 'all';
+  let openKey = null;
+  let selectedDur = 30;
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.innerText = msg;
+    t.classList.add('show');
+    clearTimeout(t.timer);
+    t.timer = setTimeout(() => { t.classList.remove('show'); }, 3000);
+  }
+
+  function copyText(txt) {
+    navigator.clipboard.writeText(txt).then(() => {
+      showToast('Đã copy: ' + txt);
+    }).catch(() => {
+      showToast(txt);
+    });
+  }
+
+  // Xác định trạng thái key
+  function getStatus(k) {
+    if (k.st === 'locked') return 'locked';
+    if (!k.exp) return 'active'; // Vĩnh viễn
+    const now = Date.now();
+    if (k.exp < now) return 'expired';
+    if (k.exp - now < 3 * 86400000) return 'soon';
+    return 'active';
+  }
+
+  // Nhãn hiển thị trạng thái
+  function getStatusBadge(k) {
+    const s = getStatus(k);
+    if (s === 'locked') return '<span class="key-status bad">Đã khóa</span>';
+    if (s === 'expired') return '<span class="key-status bad">Hết hạn</span>';
+    if (s === 'soon') {
+      const daysLeft = Math.max(1, Math.ceil((k.exp - Date.now()) / 86400000));
+      return '<span class="key-status warn">Sắp hết (còn ' + daysLeft + 'd)</span>';
+    }
+    return '<span class="key-status ok">Đang chạy</span>';
+  }
+
+  // Cập nhật thống kê
+  function updateStats() {
+    const now = Date.now();
+    let total = data.length;
+    let running = 0, soon = 0, expired = 0, locked = 0;
+
+    data.forEach(k => {
+      const s = getStatus(k);
+      if (s === 'locked') locked++;
+      else if (s === 'expired') expired++;
+      else if (s === 'soon') soon++;
+      else running++;
+    });
+
+    // Cập nhật vùng $ vcam status
+    document.getElementById('statsArea').innerHTML = 
+      '<span>tổng key</span><span>' + total + '</span>' +
+      '<span>đang chạy</span><span class="ok">' + (running + soon) + '</span>' +
+      '<span>sắp hết</span><span class="warn">' + soon + '</span>' +
+      '<span>hết hạn</span><span class="bad">' + expired + '</span>' +
+      '<span>đã khóa</span><span class="bad">' + locked + '</span>' +
+      '<span>quy tắc</span><span>1 key = 1 thiết bị</span>';
+
+    // Cập nhật các Tabs lọc
+    document.getElementById('filterTabs').innerHTML = 
+      '<button class="' + (activeFilter === 'all' ? 'on' : '') + '" onclick="setFilter(\'all\')">Tất cả (' + total + ')</button>' +
+      '<button class="' + (activeFilter === 'expired' ? 'on' : '') + '" style="color:var(--bad); font-weight:600;" onclick="setFilter(\'expired\')">Hết hạn (' + expired + ')</button>' +
+      '<button class="' + (activeFilter === 'soon' ? 'on' : '') + '" style="color:var(--warn); font-weight:600;" onclick="setFilter(\'soon\')">Sắp hết (' + soon + ')</button>' +
+      '<button class="' + (activeFilter === 'active' ? 'on' : '') + '" style="color:var(--ok);" onclick="setFilter(\'active\')">Đang chạy (' + (running + soon) + ')</button>' +
+      '<button class="' + (activeFilter === 'locked' ? 'on' : '') + '" onclick="setFilter(\'locked\')">Đã khóa (' + locked + ')</button>';
+  }
+
+  // SẮP XẾP ƯU TIÊN: HẾT HẠN & KHÓA LÊN ĐẦU TIÊN -> SẮP HẾT -> ĐANG CHẠY
+  function sortKeys(list) {
+    const rank = { 'expired': 1, 'locked': 2, 'soon': 3, 'active': 4 };
+    return [...list].sort((a, b) => {
+      return (rank[getStatus(a)] || 9) - (rank[getStatus(b)] || 9);
+    });
+  }
+
+  // RENDER DANH SÁCH KEY
+  function filterAndRender() {
+    const q = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+
+    let filtered = data.filter(k => {
+      const s = getStatus(k);
+      if (activeFilter === 'expired' && s !== 'expired') return false;
+      if (activeFilter === 'soon' && s !== 'soon') return false;
+      if (activeFilter === 'active' && s !== 'active' && s !== 'soon') return false;
+      if (activeFilter === 'locked' && s !== 'locked') return false;
+
+      if (q) {
+        const str = [k.key, k.buyer, k.plat, k.acct, k.dev, k.sn, k.ip, k.note].join(' ').toLowerCase();
+        if (!str.includes(q)) return false;
+      }
+      return true;
+    });
+
+    filtered = sortKeys(filtered);
+
+    const container = document.getElementById('keysListContainer');
+    if (filtered.length === 0) {
+      container.innerHTML = '<div style="text-align:center; padding:24px; color:var(--mute); font-size:11px;">Không có mã key nào khớp</div>';
+      return;
+    }
+
+    container.innerHTML = filtered.map(k => {
+      const isOpen = (openKey === k.key);
+      const s = getStatus(k);
+      let rowBg = '';
+      if (s === 'expired' || s === 'locked') rowBg = 'background: rgba(239, 68, 68, 0.05);';
+      else if (s === 'soon') rowBg = 'background: rgba(245, 158, 11, 0.07);';
+
+      const expDateStr = k.exp ? new Date(k.exp).toLocaleDateString('vi-VN') : 'Vĩnh viễn';
+      const daysLeftStr = k.exp ? (Math.ceil((k.exp - Date.now()) / 86400000) + 'd') : '';
+
+      return '<div class="key-row' + (isOpen ? ' open' : '') + '" style="' + rowBg + '" onclick="toggleKey(\'' + k.key + '\', event)">' +
+        '<div class="row-top">' +
+          '<span class="key-code">' + (isOpen ? '&gt; ' : '') + k.key + '</span>' +
+          getStatusBadge(k) +
+        '</div>' +
+        '<div class="row-bot">' +
+          '<span>' + k.buyer + ' · ' + k.dev + '</span>' +
+          '<span>' + k.dur_label + (k.exp && s === 'active' ? ' (còn ' + daysLeftStr + ')' : '') + '</span>' +
+        '</div>' +
+        (isOpen ? renderDetail(k, s, expDateStr) : '') +
+      '</div>';
+    }).join('');
+  }
+
+  function renderDetail(k, s, expDateStr) {
+    return '<div class="key-detail" onclick="event.stopPropagation()">' +
+      '<span style="color:var(--mute)">liên kết</span><span>' + (k.plat ? (k.plat + ': ' + (k.acct || k.buyer)) : k.buyer) + '</span>' +
+      '<span style="color:var(--mute)">thiết bị</span><span>' + k.dev + ' (' + k.sn + ')</span>' +
+      '<span style="color:var(--mute)">hạn dùng</span><span class="' + (s === 'expired' || s === 'locked' ? 'bad' : (s === 'soon' ? 'warn' : 'ok')) + '">' + expDateStr + (k.exp ? (' · ' + (s === 'expired' ? 'Quá hạn' : 'Hết hạn sau ' + Math.ceil((k.exp - Date.now()) / 86400000) + ' ngày')) : '') + '</span>' +
+      '<span style="color:var(--mute)">ip / vị trí</span><span>' + (k.ip || '—') + ' · ' + (k.loc || '—') + '</span>' +
+      (k.note ? '<span style="color:var(--mute)">ghi chú</span><span>' + k.note + '</span>' : '') +
+      '<div class="detail-acts">' +
+        '<button onclick="copyText(\'' + k.key + '\')">Copy key</button>' +
+        '<button style="color:var(--warn)" onclick="extendKey(\'' + k.key + '\')">+ Gia hạn 30d</button>' +
+        '<button onclick="resetDevice(\'' + k.key + '\')">Reset máy</button>' +
+        (s === 'locked' 
+          ? '<button style="color:var(--ok)" onclick="toggleLock(\'' + k.key + '\')">Mở khóa</button>' 
+          : '<button class="del-btn" onclick="toggleLock(\'' + k.key + '\')">Khóa key</button>') +
+        '<button class="del-btn" style="grid-column: 1 / -1;" onclick="deleteKey(\'' + k.key + '\')">Xóa vĩnh viễn</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function toggleKey(key, event) {
+    if (event.target.tagName === 'BUTTON') return;
+    openKey = (openKey === key) ? null : key;
+    filterAndRender();
+  }
+
+  function setFilter(f) {
+    activeFilter = f;
+    updateStats();
+    filterAndRender();
+  }
+
+  function toggleCreateForm() {
+    const w = document.getElementById('createFormWrap');
+    w.style.display = (w.style.display === 'none') ? 'block' : 'none';
+  }
+
+  // Chọn gói khi tạo key
+  document.getElementById('pkgSelector').onclick = (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#pkgSelector button').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    selectedDur = parseInt(btn.dataset.dur);
+  };
+
+  function submitCreateKey() {
+    const buyer = document.getElementById('newBuyer').value.trim() || 'Khách mới';
+    const plat = document.getElementById('newPlat').value;
+    const pfx = (document.getElementById('newPrefix').value || 'VCAM').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const note = document.getElementById('newNote').value.trim();
+
+    const randHex = (n) => Array.from({length: n}, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.random() * 32 | 0]).join('');
+    const newKey = pfx + '-' + randHex(4) + '-' + randHex(4);
+
+    let exp = null;
+    let dur_label = 'Vĩnh viễn';
+    if (selectedDur > 0) {
+      exp = Date.now() + selectedDur * 86400000;
+      dur_label = selectedDur + ' ngày';
+    }
+
+    data.unshift({
+      key: newKey,
+      buyer: buyer,
+      plat: plat,
+      acct: '',
+      dur_label: dur_label,
+      duration_days: selectedDur,
+      created: Date.now(),
+      exp: exp,
+      dev: '—',
+      sn: 'chưa gắn',
+      ip: '—',
+      loc: '—',
+      st: 'active',
+      note: note
+    });
+
+    document.getElementById('newBuyer').value = '';
+    document.getElementById('newNote').value = '';
+    document.getElementById('createFormWrap').style.display = 'none';
+
+    openKey = newKey;
+    activeFilter = 'all';
+    updateStats();
+    filterAndRender();
+    showToast('Đã tạo key mới: ' + newKey);
+  }
+
+  function toggleLock(key) {
+    const k = data.find(x => x.key === key);
+    if (!k) return;
+    k.st = (k.st === 'locked') ? 'active' : 'locked';
+    updateStats();
+    filterAndRender();
+    showToast((k.st === 'locked' ? 'Đã khóa ' : 'Đã mở khóa ') + key);
+  }
+
+  function extendKey(key) {
+    const k = data.find(x => x.key === key);
+    if (!k) return;
+    const base = (k.exp && k.exp > Date.now()) ? k.exp : Date.now();
+    k.exp = base + 30 * 86400000;
+    if (k.st === 'locked') k.st = 'active';
+    updateStats();
+    filterAndRender();
+    showToast('Đã gia hạn +30 ngày cho ' + key);
+  }
+
+  function resetDevice(key) {
+    const k = data.find(x => x.key === key);
+    if (!k) return;
+    k.dev = '—';
+    k.sn = 'chưa gắn';
+    k.ip = '—';
+    k.loc = '—';
+    filterAndRender();
+    showToast('Đã reset thiết bị cho ' + key);
+  }
+
+  function deleteKey(key) {
+    if (!confirm('Xác nhận xóa vĩnh viễn key ' + key + '?')) return;
+    data = data.filter(x => x.key !== key);
+    if (openKey === key) openKey = null;
+    updateStats();
+    filterAndRender();
+    showToast('Đã xóa ' + key);
+  }
+
+  // Khởi chạy ban đầu
+  updateStats();
+  filterAndRender();
+</script>
+
+</body>
+</html>
