@@ -9,6 +9,10 @@
 #import <mach/mach.h>
 
 #define kIOSurfaceLockReadOnly 0x00000001
+#ifndef kIOReturnSuccess
+#define kIOReturnSuccess 0
+#endif
+typedef int32_t IOReturn;
 
 typedef struct __IOSurface *IOSurfaceRef;
 
