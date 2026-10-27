@@ -19,7 +19,7 @@
 
 #define VCAM_SHARED_FLASH_MAGIC 0x5643414D // 'VCAM'
 
-typedef struct __attribute__((packed)) {
+typedef struct __attribute__((aligned(8))) {
     uint32_t magic;              // 'VCAM' (0x5643414D)
 
     // Flash Liveness fields (bắt chớp màu KYC)

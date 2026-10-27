@@ -226,7 +226,7 @@ static NSString *FindExistingStatePath(void) {
         uint64_t seq1, seq2;
         int retries = 0;
         do {
-            seq1 = atomic_load_explicit((_Atomic(uint64_t) *)&shared->sequence, memory_order_acquire);
+            seq1 = __atomic_load_n(&shared->sequence, __ATOMIC_ACQUIRE);
             if (seq1 & 1) { // Đang trong quá trình ghi (odd sequence)
                 continue;
             }
@@ -236,7 +236,7 @@ static NSString *FindExistingStatePath(void) {
             s.b = shared->b;
             s.intensity = shared->intensity;
             s.testMode = NO;
-            seq2 = atomic_load_explicit((_Atomic(uint64_t) *)&shared->sequence, memory_order_acquire);
+            seq2 = __atomic_load_n(&shared->sequence, __ATOMIC_ACQUIRE);
         } while (seq1 != seq2 && ++retries < 5);
 
         return s;
@@ -273,7 +273,7 @@ static NSString *FindExistingStatePath(void) {
     VCAMSharedFlashState *shared = VCAMGetSharedFlashState(true);
     if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
         uint64_t seq = shared->sequence;
-        atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 1, memory_order_release);
+        __atomic_store_n(&shared->sequence, seq + 1, __ATOMIC_RELEASE);
         shared->active = state.active ? 1 : 0;
         shared->r = state.r;
         shared->g = state.g;
@@ -281,7 +281,7 @@ static NSString *FindExistingStatePath(void) {
         shared->intensity = state.intensity;
         shared->isColorSync = 0;
         shared->timestamp = [NSDate timeIntervalSinceReferenceDate];
-        atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 2, memory_order_release);
+        __atomic_store_n(&shared->sequence, seq + 2, __ATOMIC_RELEASE);
     }
 
     // 2. Fallback ghi file chia sẻ
@@ -614,7 +614,7 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                         VCAMSharedFlashState *shared = VCAMGetSharedFlashState(true);
                         if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
                             uint64_t seq = shared->sequence;
-                            atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 1, memory_order_release);
+                            __atomic_store_n(&shared->sequence, seq + 1, __ATOMIC_RELEASE);
                             shared->active = (_smoothedIntensity > 0.01f) ? 1 : 0;
                             shared->r = _smoothedR;
                             shared->g = _smoothedG;
@@ -622,7 +622,7 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                             shared->intensity = _smoothedIntensity;
                             shared->isColorSync = 0;
                             shared->timestamp = [NSDate timeIntervalSinceReferenceDate];
-                            atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 2, memory_order_release);
+                            __atomic_store_n(&shared->sequence, seq + 2, __ATOMIC_RELEASE);
                         }
 
                         VCAMFlashState s;
@@ -684,10 +684,10 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
             VCAMSharedFlashState *shared = VCAMGetSharedFlashState(true);
             if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
                 uint64_t seq = shared->sequence;
-                atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 1, memory_order_release);
+                __atomic_store_n(&shared->sequence, seq + 1, __ATOMIC_RELEASE);
                 shared->active = 0;
                 shared->intensity = 0.0f;
-                atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 2, memory_order_release);
+                __atomic_store_n(&shared->sequence, seq + 2, __ATOMIC_RELEASE);
             }
         }
     } else {
