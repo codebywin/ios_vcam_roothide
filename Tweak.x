@@ -910,9 +910,9 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
     b.frame = CGRectMake(x, y, w, h);
     [b setTitle:title forState:UIControlStateNormal];
     [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    b.titleLabel.font = [UIFont boldSystemFontOfSize:20];
+    b.titleLabel.font = [UIFont boldSystemFontOfSize:18];
     b.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.32];
-    b.layer.cornerRadius = 10;
+    b.layer.cornerRadius = 9;
     b.layer.borderWidth = 1.0;
     b.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.48].CGColor;
     b.showsTouchWhenHighlighted = YES;
@@ -925,9 +925,9 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
     b.frame = CGRectMake(x, y, w, h);
     [b setTitle:title forState:UIControlStateNormal];
     [b setTitleColor:color forState:UIControlStateNormal];
-    b.titleLabel.font = [UIFont systemFontOfSize:21];
+    b.titleLabel.font = [UIFont systemFontOfSize:19];
     b.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.28];
-    b.layer.cornerRadius = 11;
+    b.layer.cornerRadius = 10;
     b.layer.borderWidth = 1.0;
     b.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.40].CGColor;
     b.showsTouchWhenHighlighted = YES;
@@ -943,7 +943,7 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
     _curOffsetY = VCamGetOffsetY();
 
     CGRect screen = UIScreen.mainScreen.bounds;
-    CGFloat w = 260, h = 296;
+    CGFloat w = 290, h = 286;
 
     // 1. Fully clear touch-outside dismiss overlay (behind panel)
     UIView *overlay = [[UIView alloc] initWithFrame:screen];
@@ -962,7 +962,7 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
                          screen.size.height - h - 15);
     panelY = MAX(15, panelY);
 
-    // Enlarged Rounded Square Panel (260x296)
+    // Enlarged Rounded Square Panel (290x286)
     UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(panelX, panelY, w, h)];
     panel.backgroundColor = [UIColor clearColor];
     panel.layer.cornerRadius = 24;
@@ -990,7 +990,7 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
 
     // ── 0. Top Mode Selector: [ 🔍 Zoom ] vs [ ⚡ Flash ] vs [ 💡 Đèn ] vs [ ✨ Hạt ] vs [ 🎨 Màu ] ──
     UISegmentedControl *modeCtrl = [[UISegmentedControl alloc] initWithItems:@[@"🔍 Zoom", @"⚡ Flash", @"💡 Đèn", @"✨ Hạt", @"🎨 Màu"]];
-    modeCtrl.frame = CGRectMake((w - 248) / 2.0, 10, 248, 28);
+    modeCtrl.frame = CGRectMake(14, 12, w - 28, 28);
     modeCtrl.selectedSegmentIndex = _topSliderMode;
     if (@available(iOS 13.0, *)) {
         modeCtrl.selectedSegmentTintColor = [UIColor colorWithWhite:1.0 alpha:0.25];
@@ -1002,9 +1002,9 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
     _modeControl = modeCtrl;
 
     // ── 1. Top: Slider with [-] and [+] ──
-    CGFloat minusBtnW = 38, plusBtnW = 38, ctrlY = 44, ctrlH = 34;
+    CGFloat minusBtnW = 34, plusBtnW = 34, ctrlY = 48, ctrlH = 32;
     UIButton *minusBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    minusBtn.frame = CGRectMake(10, ctrlY, minusBtnW, ctrlH);
+    minusBtn.frame = CGRectMake(14, ctrlY, minusBtnW, ctrlH);
     minusBtn.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.32];
     minusBtn.layer.cornerRadius = 9;
     minusBtn.layer.borderWidth = 0.8;
@@ -1012,12 +1012,12 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
     minusBtn.showsTouchWhenHighlighted = YES;
     [minusBtn setTitle:@"−" forState:UIControlStateNormal];
     [minusBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    minusBtn.titleLabel.font = [UIFont boldSystemFontOfSize:22];
+    minusBtn.titleLabel.font = [UIFont boldSystemFontOfSize:20];
     [minusBtn addTarget:self action:@selector(_zoomMinus) forControlEvents:UIControlEventTouchUpInside];
     [panel addSubview:minusBtn];
 
-    CGFloat sliderX = CGRectGetMaxX(minusBtn.frame) + 6;
-    CGFloat sliderW = w - sliderX - plusBtnW - 10 - 6;
+    CGFloat sliderX = CGRectGetMaxX(minusBtn.frame) + 8;
+    CGFloat sliderW = w - sliderX - plusBtnW - 14 - 8;
     _zoomSlider = [[UISlider alloc] initWithFrame:CGRectMake(sliderX, ctrlY, sliderW, ctrlH)];
     if (_topSliderMode == 1) {
         _zoomSlider.minimumValue = 0.10f;
@@ -1049,7 +1049,7 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
     [panel addSubview:_zoomSlider];
 
     UIButton *plusBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    plusBtn.frame = CGRectMake(w - plusBtnW - 10, ctrlY, plusBtnW, ctrlH);
+    plusBtn.frame = CGRectMake(w - plusBtnW - 14, ctrlY, plusBtnW, ctrlH);
     plusBtn.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.32];
     plusBtn.layer.cornerRadius = 9;
     plusBtn.layer.borderWidth = 0.8;
@@ -1057,39 +1057,42 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
     plusBtn.showsTouchWhenHighlighted = YES;
     [plusBtn setTitle:@"+" forState:UIControlStateNormal];
     [plusBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    plusBtn.titleLabel.font = [UIFont boldSystemFontOfSize:22];
+    plusBtn.titleLabel.font = [UIFont boldSystemFontOfSize:20];
     [plusBtn addTarget:self action:@selector(_zoomPlus) forControlEvents:UIControlEventTouchUpInside];
     [panel addSubview:plusBtn];
 
-    // ── 2. Middle: Enlarged D-Pad 4-Way Cross Controller + Rotate Control ──
-    CGFloat dBtnW = 52, dBtnH = 40;
-    CGFloat midX = (w - dBtnW) / 2.0;
+    // ── 2. Middle: 5-Column Symmetrical Grid (colW = 46, rowH = 38, colGap = 8) ──
+    CGFloat colW = 46, rowH = 38, colGap = 8;
+    CGFloat col1X = 14;
+    CGFloat col2X = col1X + colW + colGap; // 68
+    CGFloat col3X = col2X + colW + colGap; // 122
+    CGFloat col4X = col3X + colW + colGap; // 176
+    CGFloat col5X = col4X + colW + colGap; // 230
 
-    // Rotate Button (🔄) at top-left of D-Pad
-    UIButton *rotBtn = [self _dpadButtonWithTitle:@"🔄" x:12 y:86 w:50 h:dBtnH sel:@selector(_menuRotateVideo)];
-    rotBtn.titleLabel.font = [UIFont systemFontOfSize:20];
+    CGFloat row1Y = 90;
+    CGFloat row2Y = 134;
+    CGFloat row3Y = 178;
+
+    // Row 1: [🔄 Rotate] | [   ] | [▲ Up] | [   ] | [🪞 Flip]
+    UIButton *rotBtn = [self _dpadButtonWithTitle:@"🔄" x:col1X y:row1Y w:colW h:rowH sel:@selector(_menuRotateVideo)];
+    rotBtn.titleLabel.font = [UIFont systemFontOfSize:18];
     [panel addSubview:rotBtn];
 
-    // Mirror Flip Button (🪞) at top-right of D-Pad
+    [panel addSubview:[self _dpadButtonWithTitle:@"▲" x:col3X y:row1Y w:colW h:rowH sel:@selector(_moveUp)]];
+
     BOOL isFlipped = [[VCAMTransformManager sharedManager] isMirrorFlipped];
-    UIButton *flipBtn = [self _dpadButtonWithTitle:@"🪞" x:w - 50 - 12 y:86 w:50 h:dBtnH sel:@selector(_toggleMirrorFlip:)];
-    flipBtn.titleLabel.font = [UIFont systemFontOfSize:20];
+    UIButton *flipBtn = [self _dpadButtonWithTitle:@"🪞" x:col5X y:row1Y w:colW h:rowH sel:@selector(_toggleMirrorFlip:)];
+    flipBtn.titleLabel.font = [UIFont systemFontOfSize:18];
     if (isFlipped) {
         flipBtn.backgroundColor = [UIColor colorWithRed:0.3 green:0.75 blue:1.0 alpha:0.38];
         flipBtn.layer.borderColor = [UIColor colorWithRed:0.3 green:0.85 blue:1.0 alpha:0.95].CGColor;
     }
     [panel addSubview:flipBtn];
 
-    // Up
-    [panel addSubview:[self _dpadButtonWithTitle:@"▲" x:midX y:86 w:dBtnW h:dBtnH sel:@selector(_moveUp)]];
-
-    // Left | Center | Right
-    CGFloat row2Y = 86 + dBtnH + 5;
-
-    // Color Sync Eyedropper Button (🎨) at middle-left of D-Pad
+    // Row 2: [🎨 Color Sync] | [◀ Left] | [● Reset] | [▶ Right] | [👤/🖼️ Region]
     BOOL isColorSyncOn = [[VCAMColorSyncManager sharedManager] isColorSyncEnabled];
-    UIButton *colorBtn = [self _dpadButtonWithTitle:@"🎨" x:12 y:row2Y w:50 h:dBtnH sel:@selector(_toggleColorSyncPicker:)];
-    colorBtn.titleLabel.font = [UIFont systemFontOfSize:20];
+    UIButton *colorBtn = [self _dpadButtonWithTitle:@"🎨" x:col1X y:row2Y w:colW h:rowH sel:@selector(_toggleColorSyncPicker:)];
+    colorBtn.titleLabel.font = [UIFont systemFontOfSize:18];
     if (isColorSyncOn) {
         UIColor *sampled = [VCAMColorPickerView currentlySampledColor];
         colorBtn.backgroundColor = [sampled colorWithAlphaComponent:0.35];
@@ -1097,39 +1100,35 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
     }
     [panel addSubview:colorBtn];
 
-    [panel addSubview:[self _dpadButtonWithTitle:@"◀" x:midX - dBtnW - 6 y:row2Y w:dBtnW h:dBtnH sel:@selector(_moveLeft)]];
-    [panel addSubview:[self _dpadButtonWithTitle:@"●" x:midX y:row2Y w:dBtnW h:dBtnH sel:@selector(_moveReset)]];
-    [panel addSubview:[self _dpadButtonWithTitle:@"▶" x:midX + dBtnW + 6 y:row2Y w:dBtnW h:dBtnH sel:@selector(_moveRight)]];
+    [panel addSubview:[self _dpadButtonWithTitle:@"◀" x:col2X y:row2Y w:colW h:rowH sel:@selector(_moveLeft)]];
+    [panel addSubview:[self _dpadButtonWithTitle:@"●" x:col3X y:row2Y w:colW h:rowH sel:@selector(_moveReset)]];
+    [panel addSubview:[self _dpadButtonWithTitle:@"▶" x:col4X y:row2Y w:colW h:rowH sel:@selector(_moveRight)]];
 
-    // Color Region Mode Toggle (👤 / 🖼️) at middle-right of D-Pad
     VCAMColorSyncState cState = [VCAMColorSyncManager currentColorSyncState];
     NSString *regionIcon = (cState.region == VCAMColorSyncRegionCenterFace) ? @"👤" : @"🖼️";
-    UIButton *regionBtn = [self _dpadButtonWithTitle:regionIcon x:w - 50 - 12 y:row2Y w:50 h:dBtnH sel:@selector(_toggleColorSyncRegion:)];
-    regionBtn.titleLabel.font = [UIFont systemFontOfSize:20];
+    UIButton *regionBtn = [self _dpadButtonWithTitle:regionIcon x:col5X y:row2Y w:colW h:rowH sel:@selector(_toggleColorSyncRegion:)];
+    regionBtn.titleLabel.font = [UIFont systemFontOfSize:18];
     [panel addSubview:regionBtn];
 
-    // Down
-    CGFloat row3Y = row2Y + dBtnH + 5;
-    [panel addSubview:[self _dpadButtonWithTitle:@"▼" x:midX y:row3Y w:dBtnW h:dBtnH sel:@selector(_moveDown)]];
-
-    // KYC Flash Liveness Toggle (⚡) at bottom-left of D-Pad
+    // Row 3: [⚡ Flash Live] | [   ] | [▼ Down] | [   ] | [📸 Burst]
     BOOL isFlashOn = [[VCAMFlashLivenessManager sharedManager] isLivenessEnabled];
-    UIButton *flashBtn = [self _dpadButtonWithTitle:@"⚡" x:12 y:row3Y w:50 h:dBtnH sel:@selector(_toggleKYCFlash:)];
-    flashBtn.titleLabel.font = [UIFont systemFontOfSize:20];
+    UIButton *flashBtn = [self _dpadButtonWithTitle:@"⚡" x:col1X y:row3Y w:colW h:rowH sel:@selector(_toggleKYCFlash:)];
+    flashBtn.titleLabel.font = [UIFont systemFontOfSize:18];
     if (isFlashOn) {
         flashBtn.backgroundColor = [UIColor colorWithRed:0.20 green:0.80 blue:0.40 alpha:0.35];
         flashBtn.layer.borderColor = [UIColor colorWithRed:0.20 green:0.85 blue:0.45 alpha:0.9].CGColor;
     }
     [panel addSubview:flashBtn];
 
-    // Chớp Sáng Phản Quang Flash Burst (📸) tại góc dưới bên phải D-Pad (1 chạm chớp 0.45s)
-    UIButton *burstBtn = [self _dpadButtonWithTitle:@"📸" x:w - 50 - 12 y:row3Y w:50 h:dBtnH sel:@selector(_triggerFlashBurst:)];
-    burstBtn.titleLabel.font = [UIFont systemFontOfSize:20];
+    [panel addSubview:[self _dpadButtonWithTitle:@"▼" x:col3X y:row3Y w:colW h:rowH sel:@selector(_moveDown)]];
+
+    UIButton *burstBtn = [self _dpadButtonWithTitle:@"📸" x:col5X y:row3Y w:colW h:rowH sel:@selector(_triggerFlashBurst:)];
+    burstBtn.titleLabel.font = [UIFont systemFontOfSize:18];
     [panel addSubview:burstBtn];
 
-    // ── 3. Bottom: 6 Action Icon Buttons (Horizontal Row, 36x42) ──
-    CGFloat iconW = 36, iconH = 42, iconY = 236;
-    CGFloat iconSpacing = 5;
+    // ── 3. Bottom: 6 Action Icon Buttons (Horizontal Row, 38x40) ──
+    CGFloat iconW = 38, iconH = 40, iconY = 228;
+    CGFloat iconSpacing = 6;
     CGFloat totalIconsW = 6 * iconW + 5 * iconSpacing;
     CGFloat startIconX = (w - totalIconsW) / 2.0;
 

@@ -368,7 +368,7 @@ static void VCAMSamplePixelAtNormalizedPoint(CGFloat normX, CGFloat normY, void 
     [_loupeContainer addSubview:dot];
 
     // 4. Bảng điều khiển màu nổi bên dưới kính lúp (Badge View)
-    CGFloat badgeW = 160.0, badgeH = 74.0;
+    CGFloat badgeW = 190.0, badgeH = 78.0;
     _badgeView = [[UIView alloc] initWithFrame:CGRectMake(_samplePoint.x - badgeW / 2.0,
                                                           CGRectGetMaxY(_loupeContainer.frame) + 12.0,
                                                           badgeW,
@@ -392,7 +392,7 @@ static void VCAMSamplePixelAtNormalizedPoint(CGFloat normX, CGFloat normY, void 
     [_badgeView addSubview:_colorHexLabel];
 
     // Label RGB chi tiết
-    _rgbLabel = [[UILabel alloc] initWithFrame:CGRectMake(8, 24, badgeW - 16, 14)];
+    _rgbLabel = [[UILabel alloc] initWithFrame:CGRectMake(8, 25, badgeW - 16, 14)];
     _rgbLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightRegular];
     _rgbLabel.textColor = [UIColor colorWithWhite:0.80 alpha:1.0];
     _rgbLabel.textAlignment = NSTextAlignmentCenter;
@@ -400,17 +400,17 @@ static void VCAMSamplePixelAtNormalizedPoint(CGFloat normX, CGFloat normY, void 
 
     // Nút [ Đồng bộ / Bắt nháy live ]
     _syncButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    _syncButton.frame = CGRectMake(10, 42, 102, 24);
+    _syncButton.frame = CGRectMake(12, 44, 122, 26);
     _syncButton.backgroundColor = [UIColor colorWithRed:0.20 green:0.75 blue:0.42 alpha:0.95];
     _syncButton.layer.cornerRadius = 7.0;
-    _syncButton.titleLabel.font = [UIFont boldSystemFontOfSize:10];
+    _syncButton.titleLabel.font = [UIFont boldSystemFontOfSize:11];
     [_syncButton addTarget:self action:@selector(_syncAction) forControlEvents:UIControlEventTouchUpInside];
     [_badgeView addSubview:_syncButton];
     [self _updateSyncButtonUI];
 
     // Nút [ ✕ ] (Đóng)
     _closeButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    _closeButton.frame = CGRectMake(badgeW - 38 - 10, 42, 38, 24);
+    _closeButton.frame = CGRectMake(142, 44, 36, 26);
     _closeButton.backgroundColor = [UIColor colorWithWhite:0.25 alpha:0.90];
     _closeButton.layer.cornerRadius = 7.0;
     [_closeButton setTitle:@"✕" forState:UIControlStateNormal];
