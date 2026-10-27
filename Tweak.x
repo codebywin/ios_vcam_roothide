@@ -16,6 +16,8 @@
 #import "VCAMPhotoManager.h"
 #import "VCAMVideoManager.h"
 #import "VCAMShadingManager.h"
+#import "VCAMColorSyncManager.h"
+#import "VCAMColorPickerView.h"
 #import <ImageIO/ImageIO.h>
 #include <string.h>
 #include <dlfcn.h>
@@ -310,6 +312,12 @@ static OSStatus VCamCopyPixelBuffer(CVPixelBufferRef source, CVPixelBufferRef ta
             // 3.2. Áp dụng Đổ bóng tạo khối 3D khuôn mặt & Hạt nhiễu cảm biến camera (3D Shading & CMOS Sensor Grain)
             VCAMShadingState shadingState = [VCAMShadingManager currentShadingState];
             img = [VCAMShadingManager apply3DShadingAndGrainToImage:img size:CGSizeMake(dstW, dstH) state:shadingState];
+
+            // 3.3. Áp dụng Cân bằng & Đồng bộ sắc độ màu da Camera (Color Sync / Skin Tone Matching)
+            VCAMColorSyncState colorSyncState = [VCAMColorSyncManager currentColorSyncState];
+            if (colorSyncState.enabled) {
+                img = [VCAMColorSyncManager applyColorSyncToImage:img size:CGSizeMake(dstW, dstH) state:colorSyncState];
+            }
 
             // 4. Render trực tiếp vào target CVPixelBuffer bằng GPU Metal trong 1 pass duy nhất
             [gCIContext render:img toCVPixelBuffer:target bounds:CGRectMake(0, 0, dstW, dstH) colorSpace:nil];
@@ -724,7 +732,7 @@ static UIViewController *VCamPresenter(void);
     UIView  *_panel;
     UISlider *_zoomSlider;
     UISegmentedControl *_modeControl;
-    int _topSliderMode; // 0: Zoom, 1: Flash, 2: 3D & Grain
+    int _topSliderMode; // 0: Zoom, 1: Flash, 2: Đèn, 3: Hạt, 4: Màu
     CGFloat _curOffsetX;
     CGFloat _curOffsetY;
 }
@@ -980,14 +988,14 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
     tintOverlay.userInteractionEnabled = NO;
     [panel addSubview:tintOverlay];
 
-    // ── 0. Top Mode Selector: [ 🔍 Zoom ] vs [ ⚡ Flash ] vs [ 💡 Đèn ] vs [ ✨ Hạt ] ──
-    UISegmentedControl *modeCtrl = [[UISegmentedControl alloc] initWithItems:@[@"🔍 Zoom", @"⚡ Flash", @"💡 Đèn", @"✨ Hạt"]];
-    modeCtrl.frame = CGRectMake((w - 244) / 2.0, 10, 244, 28);
+    // ── 0. Top Mode Selector: [ 🔍 Zoom ] vs [ ⚡ Flash ] vs [ 💡 Đèn ] vs [ ✨ Hạt ] vs [ 🎨 Màu ] ──
+    UISegmentedControl *modeCtrl = [[UISegmentedControl alloc] initWithItems:@[@"🔍 Zoom", @"⚡ Flash", @"💡 Đèn", @"✨ Hạt", @"🎨 Màu"]];
+    modeCtrl.frame = CGRectMake((w - 248) / 2.0, 10, 248, 28);
     modeCtrl.selectedSegmentIndex = _topSliderMode;
     if (@available(iOS 13.0, *)) {
         modeCtrl.selectedSegmentTintColor = [UIColor colorWithWhite:1.0 alpha:0.25];
-        [modeCtrl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor], NSFontAttributeName: [UIFont boldSystemFontOfSize:11]} forState:UIControlStateNormal];
-        [modeCtrl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor colorWithRed:0.3 green:0.85 blue:1.0 alpha:1.0], NSFontAttributeName: [UIFont boldSystemFontOfSize:11]} forState:UIControlStateSelected];
+        [modeCtrl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor], NSFontAttributeName: [UIFont boldSystemFontOfSize:10]} forState:UIControlStateNormal];
+        [modeCtrl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor colorWithRed:0.3 green:0.85 blue:1.0 alpha:1.0], NSFontAttributeName: [UIFont boldSystemFontOfSize:10]} forState:UIControlStateSelected];
     }
     [modeCtrl addTarget:self action:@selector(_sliderModeChanged:) forControlEvents:UIControlEventValueChanged];
     [panel addSubview:modeCtrl];
@@ -1026,6 +1034,11 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
         _zoomSlider.maximumValue = 0.80f;
         _zoomSlider.value = [[VCAMShadingManager sharedManager] grainIntensity];
         _zoomSlider.tintColor = [UIColor colorWithRed:0.75 green:0.75 blue:1.00 alpha:1.0];
+    } else if (_topSliderMode == 4) {
+        _zoomSlider.minimumValue = 0.05f;
+        _zoomSlider.maximumValue = 1.00f;
+        _zoomSlider.value = [[VCAMColorSyncManager sharedManager] colorSyncIntensity];
+        _zoomSlider.tintColor = [VCAMColorPickerView currentlySampledColor];
     } else {
         _zoomSlider.minimumValue = 0.4f;
         _zoomSlider.maximumValue = 2.5f;
@@ -1072,9 +1085,28 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
 
     // Left | Center | Right
     CGFloat row2Y = 86 + dBtnH + 5;
+
+    // Color Sync Eyedropper Button (🎨) at middle-left of D-Pad
+    BOOL isColorSyncOn = [[VCAMColorSyncManager sharedManager] isColorSyncEnabled];
+    UIButton *colorBtn = [self _dpadButtonWithTitle:@"🎨" x:12 y:row2Y w:50 h:dBtnH sel:@selector(_toggleColorSyncPicker:)];
+    colorBtn.titleLabel.font = [UIFont systemFontOfSize:20];
+    if (isColorSyncOn) {
+        UIColor *sampled = [VCAMColorPickerView currentlySampledColor];
+        colorBtn.backgroundColor = [sampled colorWithAlphaComponent:0.35];
+        colorBtn.layer.borderColor = sampled.CGColor;
+    }
+    [panel addSubview:colorBtn];
+
     [panel addSubview:[self _dpadButtonWithTitle:@"◀" x:midX - dBtnW - 6 y:row2Y w:dBtnW h:dBtnH sel:@selector(_moveLeft)]];
     [panel addSubview:[self _dpadButtonWithTitle:@"●" x:midX y:row2Y w:dBtnW h:dBtnH sel:@selector(_moveReset)]];
     [panel addSubview:[self _dpadButtonWithTitle:@"▶" x:midX + dBtnW + 6 y:row2Y w:dBtnW h:dBtnH sel:@selector(_moveRight)]];
+
+    // Color Region Mode Toggle (👤 / 🖼️) at middle-right of D-Pad
+    VCAMColorSyncState cState = [VCAMColorSyncManager currentColorSyncState];
+    NSString *regionIcon = (cState.region == VCAMColorSyncRegionCenterFace) ? @"👤" : @"🖼️";
+    UIButton *regionBtn = [self _dpadButtonWithTitle:regionIcon x:w - 50 - 12 y:row2Y w:50 h:dBtnH sel:@selector(_toggleColorSyncRegion:)];
+    regionBtn.titleLabel.font = [UIFont systemFontOfSize:20];
+    [panel addSubview:regionBtn];
 
     // Down
     CGFloat row3Y = row2Y + dBtnH + 5;
@@ -1167,6 +1199,34 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
     [self _showToast:[NSString stringWithFormat:@"Đã xoay: %d°", next]];
 }
 
+- (void)_toggleColorSyncPicker:(UIButton *)sender {
+    if ([VCAMColorPickerView isColorPickerVisible]) {
+        [VCAMColorPickerView hideColorPicker];
+        [self _showToast:@"🎨 Đã đóng kính lúp"];
+    } else {
+        [VCAMColorPickerView showColorPicker];
+        [self _showToast:@"🎨 Kéo kính lúp để chọn màu da"];
+    }
+    BOOL isEnabled = [[VCAMColorSyncManager sharedManager] isColorSyncEnabled];
+    UIColor *col = [VCAMColorPickerView currentlySampledColor];
+    sender.backgroundColor = isEnabled ? [col colorWithAlphaComponent:0.35] : [UIColor colorWithWhite:0.0 alpha:0.32];
+    sender.layer.borderColor = isEnabled ? col.CGColor : [UIColor colorWithWhite:1.0 alpha:0.48].CGColor;
+}
+
+- (void)_toggleColorSyncRegion:(UIButton *)sender {
+    VCAMColorSyncState st = [VCAMColorSyncManager currentColorSyncState];
+    if (st.region == VCAMColorSyncRegionCenterFace) {
+        st.region = VCAMColorSyncRegionFullFrame;
+        [sender setTitle:@"🖼️" forState:UIControlStateNormal];
+        [self _showToast:@"🎨 Vùng màu: Toàn khung hình"];
+    } else {
+        st.region = VCAMColorSyncRegionCenterFace;
+        [sender setTitle:@"👤" forState:UIControlStateNormal];
+        [self _showToast:@"🎨 Vùng màu: Trọng tâm khuôn mặt"];
+    }
+    [VCAMColorSyncManager saveColorSyncState:st];
+}
+
 - (void)_sliderModeChanged:(UISegmentedControl *)sender {
     _topSliderMode = (int)sender.selectedSegmentIndex;
 
@@ -1200,6 +1260,16 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
         [[VCAMShadingManager sharedManager] setGrainEnabled:YES];
         [[VCAMShadingManager sharedManager] setGrainIntensity:curGrain];
         [self _showToast:[NSString stringWithFormat:@"✨ Hạt nhiễu: %.0f%%", curGrain * 100.0f]];
+    } else if (_topSliderMode == 4) { // 🎨 Màu (Color Sync Skin Tone)
+        CGFloat curInt = [[VCAMColorSyncManager sharedManager] colorSyncIntensity];
+        if (curInt < 0.05f) curInt = 0.65f;
+        _zoomSlider.minimumValue = 0.05f;
+        _zoomSlider.maximumValue = 1.00f;
+        _zoomSlider.value = curInt;
+        _zoomSlider.tintColor = [VCAMColorPickerView currentlySampledColor];
+        [[VCAMColorSyncManager sharedManager] setColorSyncEnabled:YES];
+        [[VCAMColorSyncManager sharedManager] setColorSyncIntensity:curInt];
+        [self _showToast:[NSString stringWithFormat:@"🎨 Độ đậm màu: %.0f%%", curInt * 100.0f]];
     } else { // 🔍 Zoom
         CGFloat curScale = VCamGetScale();
         _zoomSlider.minimumValue = 0.4f;
@@ -1245,6 +1315,16 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
             [[VCAMShadingManager sharedManager] setGrainIntensity:val];
             [self _showToast:[NSString stringWithFormat:@"✨ Hạt nhiễu: %.0f%%", val * 100.0f]];
         }
+    } else if (_topSliderMode == 4) {
+        CGFloat val = slider.value;
+        if (val < 0.06f) {
+            [[VCAMColorSyncManager sharedManager] setColorSyncEnabled:NO];
+            [self _showToast:@"🎨 Đồng bộ màu: TẮT"];
+        } else {
+            [[VCAMColorSyncManager sharedManager] setColorSyncEnabled:YES];
+            [[VCAMColorSyncManager sharedManager] setColorSyncIntensity:val];
+            [self _showToast:[NSString stringWithFormat:@"🎨 Độ đậm màu: %.0f%%", val * 100.0f]];
+        }
     } else {
         [self _updateZoomValue:slider.value];
     }
@@ -1272,6 +1352,13 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
         if (_zoomSlider) _zoomSlider.value = next;
         [[VCAMShadingManager sharedManager] setGrainIntensity:next];
         [self _showToast:[NSString stringWithFormat:@"✨ Hạt nhiễu: %.0f%%", next * 100.0f]];
+    } else if (_topSliderMode == 4) {
+        CGFloat current = _zoomSlider ? _zoomSlider.value : [[VCAMColorSyncManager sharedManager] colorSyncIntensity];
+        CGFloat next = current - 0.05f;
+        if (next < 0.05f) next = 0.05f;
+        if (_zoomSlider) _zoomSlider.value = next;
+        [[VCAMColorSyncManager sharedManager] setColorSyncIntensity:next];
+        [self _showToast:[NSString stringWithFormat:@"🎨 Độ đậm màu: %.0f%%", next * 100.0f]];
     } else {
         CGFloat current = _zoomSlider ? _zoomSlider.value : VCamGetScale();
         CGFloat next = current - 0.10f;
@@ -1303,6 +1390,13 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
         if (_zoomSlider) _zoomSlider.value = next;
         [[VCAMShadingManager sharedManager] setGrainIntensity:next];
         [self _showToast:[NSString stringWithFormat:@"✨ Hạt nhiễu: %.0f%%", next * 100.0f]];
+    } else if (_topSliderMode == 4) {
+        CGFloat current = _zoomSlider ? _zoomSlider.value : [[VCAMColorSyncManager sharedManager] colorSyncIntensity];
+        CGFloat next = current + 0.05f;
+        if (next > 1.00f) next = 1.00f;
+        if (_zoomSlider) _zoomSlider.value = next;
+        [[VCAMColorSyncManager sharedManager] setColorSyncIntensity:next];
+        [self _showToast:[NSString stringWithFormat:@"🎨 Độ đậm màu: %.0f%%", next * 100.0f]];
     } else {
         CGFloat current = _zoomSlider ? _zoomSlider.value : VCamGetScale();
         CGFloat next = current + 0.10f;
