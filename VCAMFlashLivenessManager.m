@@ -223,12 +223,22 @@ static NSString *FindExistingStatePath(void) {
     VCAMSharedFlashState *shared = VCAMGetSharedFlashState(false);
     if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
         VCAMFlashState s;
-        s.active = (shared->active != 0);
-        s.r = shared->r;
-        s.g = shared->g;
-        s.b = shared->b;
-        s.intensity = shared->intensity;
-        s.testMode = NO;
+        uint64_t seq1, seq2;
+        int retries = 0;
+        do {
+            seq1 = atomic_load_explicit((_Atomic(uint64_t) *)&shared->sequence, memory_order_acquire);
+            if (seq1 & 1) { // Đang trong quá trình ghi (odd sequence)
+                continue;
+            }
+            s.active = (shared->active != 0);
+            s.r = shared->r;
+            s.g = shared->g;
+            s.b = shared->b;
+            s.intensity = shared->intensity;
+            s.testMode = NO;
+            seq2 = atomic_load_explicit((_Atomic(uint64_t) *)&shared->sequence, memory_order_acquire);
+        } while (seq1 != seq2 && ++retries < 5);
+
         return s;
     }
 
@@ -259,17 +269,19 @@ static NSString *FindExistingStatePath(void) {
 }
 
 + (void)saveFlashState:(VCAMFlashState)state {
-    // 1. Cập nhật tức thì vào Shared Memory (0ms latency, trực tiếp trong RAM)
+    // 1. Cập nhật tức thì vào Shared Memory qua SeqLock (Atomic Snapshot, 0ms latency)
     VCAMSharedFlashState *shared = VCAMGetSharedFlashState(true);
-    if (shared) {
+    if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
+        uint64_t seq = shared->sequence;
+        atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 1, memory_order_release);
         shared->active = state.active ? 1 : 0;
         shared->r = state.r;
         shared->g = state.g;
         shared->b = state.b;
         shared->intensity = state.intensity;
         shared->isColorSync = 0;
-        shared->sequence++;
         shared->timestamp = [NSDate timeIntervalSinceReferenceDate];
+        atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 2, memory_order_release);
     }
 
     // 2. Fallback ghi file chia sẻ
@@ -361,6 +373,17 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                 // Loại trừ vị trí nút nổi của chính tweak
                 if (VCamIsScreenPointInTweakUI(normX, normY)) continue;
 
+                // Trọng số không gian (Spatial Weighting):
+                // Vùng viền ngoài (Border & Corner) là nơi app KYC chiếu màu flash mà KHÔNG có mặt người
+                // cho trọng số cao gấp 2.5 lần vùng trung tâm (nơi có thể chứa mặt / áo quần trong camera preview)
+                float spatialWeight = 1.0f;
+                BOOL isOuterRegion = (normX < 0.26f || normX > 0.74f || normY < 0.22f || normY > 0.78f);
+                if (isOuterRegion) {
+                    spatialWeight = 2.5f;
+                } else {
+                    spatialWeight = 0.6f; // Giảm thiểu ảnh hưởng từ camera preview trung tâm
+                }
+
                 uint32_t p = pixels[y * sampleW + x];
                 float r = (float)(p & 0xFF) / 255.0f;
                 float g = (float)((p >> 8) & 0xFF) / 255.0f;
@@ -377,7 +400,7 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
 
                 // Phân loại dải màu (Chroma Binning) cho các pixel có độ bão hòa
                 if (delta >= 0.10f && maxVal >= 0.18f) {
-                    float weight = delta * delta * maxVal;
+                    float weight = delta * delta * maxVal * spatialWeight;
                     KYCColorBinType binIdx = BIN_NONE;
 
                     if (r > 0.40f && r > g * 1.25f && r > b * 1.25f) {
@@ -422,7 +445,8 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
         }
 
         // 1. Nhận diện chớp màu KYC đặc trưng (Red, Green, Blue, Cyan, Yellow, Magenta)
-        if (bestBin != BIN_NONE && bins[bestBin].pixelCount >= 6 && maxWeight > 1.2f) {
+        // Ưu tiên màu bão hòa trước (với ngưỡng tin cậy >= 14 pixel và weight > 1.8f)
+        if (bestBin != BIN_NONE && bins[bestBin].pixelCount >= 14 && maxWeight > 1.8f) {
             float avgR = bins[bestBin].sumR / bins[bestBin].totalWeight;
             float avgG = bins[bestBin].sumG / bins[bestBin].totalWeight;
             float avgB = bins[bestBin].sumB / bins[bestBin].totalWeight;
@@ -534,7 +558,8 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
         return;
     }
 
-    // Tự động quét màu màn hình app eKYC theo thời gian thực (40 FPS)
+    // Tự động quét màu màn hình app eKYC theo thời gian thực (50 FPS)
+    BOOL captureSuccess = NO;
     if (_uikitCreateScreenUIImage) {
         @autoreleasepool {
             @try {
@@ -542,6 +567,7 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                 if (rawImg) {
                     UIImage *screenImg = (__bridge_transfer UIImage *)rawImg;
                     if (screenImg && screenImg.CGImage) {
+                        captureSuccess = YES;
                         float sampleR = 1.0f, sampleG = 1.0f, sampleB = 1.0f;
                         float saturation = 0.0f;
                         float luminance = 0.0f;
@@ -554,17 +580,19 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                         BOOL isFlashingNow = NO;
                         float targetIntensity = 0.0f;
 
-                        if ([detectedColorName isEqualToString:@"Trắng Flash"] || luminance >= 0.48f) {
-                            // Chớp sáng trắng (White Flash - ví dụ app test chế độ 1s)
-                            isFlashingNow = YES;
-                            float boost = MIN(1.0f, (luminance - 0.35f) / 0.40f);
-                            targetIntensity = (float)_intensity * MAX(0.25f, boost);
-                            sampleR = 1.0f; sampleG = 1.0f; sampleB = 1.0f;
-                        } else if (saturation >= 0.10f && votedCount >= 6) {
-                            // Chớp màu KYC (Color Flash)
+                        // 1. Ưu tiên dải màu KYC bão hòa (Đỏ, Xanh lục, Xanh lam, Vàng, Cyan, Tím)
+                        // Bắt buộc xét trước để các màu sáng rực như Vàng, Cyan không bị gộp thành Trắng
+                        if (saturation >= 0.10f && votedCount >= 14 && ![detectedColorName isEqualToString:@"Bình thường"] && ![detectedColorName isEqualToString:@"Trắng Flash"]) {
                             isFlashingNow = YES;
                             float boost = MIN(1.0f, MAX(luminance, saturation * 1.30f));
-                            targetIntensity = (float)_intensity * MAX(0.25f, boost);
+                            targetIntensity = (float)_intensity * MAX(0.30f, boost);
+                        }
+                        // 2. Chớp sáng trắng / trung tính (White Flash) khi KHÔNG có dải màu bão hòa
+                        else if ([detectedColorName isEqualToString:@"Trắng Flash"] || luminance >= 0.48f) {
+                            isFlashingNow = YES;
+                            float boost = MIN(1.0f, (luminance - 0.35f) / 0.40f);
+                            targetIntensity = (float)_intensity * MAX(0.30f, boost);
+                            sampleR = 1.0f; sampleG = 1.0f; sampleB = 1.0f;
                         } else {
                             // Màn hình bình thường
                             isFlashingNow = NO;
@@ -582,17 +610,19 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                             _smoothedIntensity = 0.0f;
                         }
 
-                        // ── Cập nhật thẳng vào Shared Memory (0ms IPC, không qua file đĩa) ──
+                        // ── Cập nhật thẳng vào Shared Memory với SeqLock (0ms IPC, đảm bảo Atomic Snapshot) ──
                         VCAMSharedFlashState *shared = VCAMGetSharedFlashState(true);
-                        if (shared) {
+                        if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
+                            uint64_t seq = shared->sequence;
+                            atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 1, memory_order_release);
                             shared->active = (_smoothedIntensity > 0.01f) ? 1 : 0;
                             shared->r = _smoothedR;
                             shared->g = _smoothedG;
                             shared->b = _smoothedB;
                             shared->intensity = _smoothedIntensity;
                             shared->isColorSync = 0;
-                            shared->sequence++;
                             shared->timestamp = [NSDate timeIntervalSinceReferenceDate];
+                            atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 2, memory_order_release);
                         }
 
                         VCAMFlashState s;
@@ -602,6 +632,16 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                         s.g = _smoothedG;
                         s.b = _smoothedB;
                         s.intensity = _smoothedIntensity;
+
+                        // Cập nhật fallback file định kỳ hoặc khi trạng thái đổi để đảm bảo dữ liệu mới
+                        static NSTimeInterval lastDiskWrite = 0;
+                        static BOOL lastDiskActive = NO;
+                        NSTimeInterval nowDisk = [NSDate timeIntervalSinceReferenceDate];
+                        if (s.active != lastDiskActive || (nowDisk - lastDiskWrite > 0.35)) {
+                            lastDiskWrite = nowDisk;
+                            lastDiskActive = s.active;
+                            [VCAMFlashLivenessManager saveFlashState:s];
+                        }
 
                         static NSTimeInterval lastLogTime = 0;
                         static BOOL lastLoggedActive = NO;
@@ -618,11 +658,13 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                                 detectedColorName, votedCount,
                                 s.active ? "YES" : "NO", _smoothedIntensity,
                                 luminance, saturation, _smoothedR, _smoothedG, _smoothedB];
-                            FILE *lf = fopen("/var/tmp/vcam_flash.log", "a");
+                            FILE *lf = fopen("/rootfs/private/var/tmp/vcam_flash.log", "a");
+                            if (!lf) lf = fopen("/var/tmp/vcam_flash.log", "a");
                             if (!lf) lf = fopen("/tmp/vcam_flash.log", "a");
                             if (lf) {
                                 fputs([logMsg UTF8String], lf);
                                 fclose(lf);
+                                chmod("/rootfs/private/var/tmp/vcam_flash.log", 0666);
                                 chmod("/var/tmp/vcam_flash.log", 0666);
                             }
                         }
@@ -632,6 +674,24 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                 // Ignore capture exception
             }
         }
+    }
+
+    if (!captureSuccess) {
+        _consecutiveCaptureFailures++;
+        if (_consecutiveCaptureFailures >= 2) {
+            // Lập tức tắt flash nếu không bắt được hình màn hình, không giữ màu cũ
+            _smoothedIntensity = 0.0f;
+            VCAMSharedFlashState *shared = VCAMGetSharedFlashState(true);
+            if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
+                uint64_t seq = shared->sequence;
+                atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 1, memory_order_release);
+                shared->active = 0;
+                shared->intensity = 0.0f;
+                atomic_store_explicit((_Atomic(uint64_t) *)&shared->sequence, seq + 2, memory_order_release);
+            }
+        }
+    } else {
+        _consecutiveCaptureFailures = 0;
     }
 }
 
