@@ -518,8 +518,8 @@ static void VCAMSamplePixelAtNormalizedPoint(CGFloat normX, CGFloat normY, void 
     _sampleQueue = dispatch_queue_create("com.vcam.colorpicker.sample", DISPATCH_QUEUE_SERIAL);
     _sampleTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _sampleQueue);
 
-    // Lấy mẫu 20 FPS (50ms mỗi lần)
-    dispatch_source_set_timer(_sampleTimer, dispatch_time(DISPATCH_TIME_NOW, 0), 50 * NSEC_PER_MSEC, 10 * NSEC_PER_MSEC);
+    // Lấy mẫu 40 FPS (25ms mỗi lần) - Phản xạ tức thì theo thời gian thực
+    dispatch_source_set_timer(_sampleTimer, dispatch_time(DISPATCH_TIME_NOW, 0), 25 * NSEC_PER_MSEC, 5 * NSEC_PER_MSEC);
 
     __weak typeof(self) weakSelf = self;
     dispatch_source_set_event_handler(_sampleTimer, ^{

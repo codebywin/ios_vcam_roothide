@@ -204,10 +204,22 @@ static NSString *FindExistingStatePath(void) {
 }
 
 + (VCAMFlashState)currentFlashState {
+    VCAMSharedFlashState *shared = VCAMGetSharedFlashState(false);
+    if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
+        VCAMFlashState s;
+        s.active = (shared->active != 0);
+        s.r = shared->r;
+        s.g = shared->g;
+        s.b = shared->b;
+        s.intensity = shared->intensity;
+        s.testMode = NO;
+        return s;
+    }
+
     static VCAMFlashState cachedState = {1.0f, 1.0f, 1.0f, 0.35f, NO, NO};
     static NSTimeInterval lastReadTime = 0;
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (now - lastReadTime < 0.12) { // 120ms throttle cache: 8-9 reads/sec for fast responsiveness with low I/O
+    if (now - lastReadTime < 0.12) {
         return cachedState;
     }
     lastReadTime = now;
@@ -231,6 +243,20 @@ static NSString *FindExistingStatePath(void) {
 }
 
 + (void)saveFlashState:(VCAMFlashState)state {
+    // 1. Cập nhật tức thì vào Shared Memory (0ms latency, trực tiếp trong RAM)
+    VCAMSharedFlashState *shared = VCAMGetSharedFlashState(true);
+    if (shared) {
+        shared->active = state.active ? 1 : 0;
+        shared->r = state.r;
+        shared->g = state.g;
+        shared->b = state.b;
+        shared->intensity = state.intensity;
+        shared->isColorSync = 0;
+        shared->sequence++;
+        shared->timestamp = [NSDate timeIntervalSinceReferenceDate];
+    }
+
+    // 2. Fallback ghi file chia sẻ
     char buf[128];
     snprintf(buf, sizeof(buf), "%d %d %.3f %.3f %.3f %.2f\n",
              state.active ? 1 : 0,
@@ -280,9 +306,9 @@ static const char *kBinNames[BIN_COUNT] = {
     "TÍM (Magenta)"
 };
 
-/// Thuật toán trích xuất dải màu bão hòa chủ đạo (Dominant Chroma Bin Voting)
-/// Quét lưới 24x24 (576 điểm ảnh), loại trừ 100% giao diện tweak, phân loại cụm màu áp đảo
-static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *outG, float *outB, float *outSat, NSString **outColorName, int *outVotedCount, float *outVotedWeight) {
+/// Thuật toán trích xuất dải màu và độ sáng màn hình theo thời gian thực (Zero-Lag Screen Flash Detection)
+/// Quét lưới 24x24 (576 điểm ảnh) loại trừ nút tweak, nhận diện tức thì cả White Flash và Chroma Flash
+static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *outG, float *outB, float *outSat, float *outLum, NSString **outColorName, int *outVotedCount, float *outVotedWeight) {
     if (!cgImage) return;
 
     const int sampleW = 24;
@@ -305,33 +331,19 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
 
         KYCColorBin bins[BIN_COUNT] = {0};
         float totalR = 0, totalG = 0, totalB = 0;
-        int validSampledCount = 0;
+        int validCount = 0;
 
         for (int y = 0; y < sampleH; y++) {
             float normY = (float)y / (float)sampleH;
 
-            // 1. Loại trừ top 12% (Header, Status Bar, App Title) và bottom 10% (Home Indicator, Guide Banner)
-            // Ngăn chặn 100% việc nhận diện nhầm thanh giao diện màu xanh của MSB Bank!
-            if (normY < 0.12f || normY > 0.90f) {
-                continue;
-            }
+            // Loại trừ thanh status bar trên cùng và home indicator dưới cùng
+            if (normY < 0.08f || normY > 0.94f) continue;
 
             for (int x = 0; x < sampleW; x++) {
                 float normX = (float)x / (float)sampleW;
 
-                // 2. Loại trừ 100% vùng giao diện của chính tweak (Floating Button & Control Panel)
-                if (VCamIsScreenPointInTweakUI(normX, normY)) {
-                    continue;
-                }
-
-                // 3. QUAN TRỌNG: Loại trừ vùng Camera Preview ở trung tâm màn hình (vùng hiển thị khuôn mặt)
-                // để phá vỡ hoàn toàn vòng lặp hồi tiếp quang học (Optical Feedback Loop)!
-                // Khung oval khuôn mặt nằm ở: X từ 0.22 đến 0.78, Y từ 0.20 đến 0.76.
-                // Ánh sáng chớp eKYC bao phủ viền màn hình và nền ngoài oval, do đó việc chỉ quét viền ngoài
-                // vừa bắt trúng 100% nhịp chớp thật của app, vừa không bao giờ nhìn thấy ánh sáng mà tweak chiếu lên mặt!
-                if (normX >= 0.22f && normX <= 0.78f && normY >= 0.20f && normY <= 0.76f) {
-                    continue;
-                }
+                // Loại trừ vị trí nút nổi của chính tweak
+                if (VCamIsScreenPointInTweakUI(normX, normY)) continue;
 
                 uint32_t p = pixels[y * sampleW + x];
                 float r = (float)(p & 0xFF) / 255.0f;
@@ -341,53 +353,49 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                 totalR += r;
                 totalG += g;
                 totalB += b;
-                validSampledCount++;
+                validCount++;
 
                 float maxVal = MAX(r, MAX(g, b));
                 float minVal = MIN(r, MIN(g, b));
                 float delta = maxVal - minVal;
 
-                // Bỏ qua các điểm ảnh tối hoặc xám/trắng/trung tính (da mặt bình thường, nền xám/đen)
-                // Ngưỡng bão hòa delta >= 0.18f
-                if (maxVal < 0.18f || delta < 0.18f) {
-                    continue;
-                }
+                // Phân loại dải màu (Chroma Binning) cho các pixel có độ bão hòa
+                if (delta >= 0.10f && maxVal >= 0.18f) {
+                    float weight = delta * delta * maxVal;
+                    KYCColorBinType binIdx = BIN_NONE;
 
-                // Trọng số bão hòa bình phương: điểm ảnh càng rực màu thì tiếng nói càng áp đảo
-                float weight = delta * delta * maxVal;
-                // Vùng viền màn hình (nơi app eKYC hay chớp màu) được tăng 30% trọng số
-                if (y < 6 || y > 17 || x < 5 || x > 18) {
-                    weight *= 1.30f;
-                }
+                    if (r > 0.40f && r > g * 1.25f && r > b * 1.25f) {
+                        binIdx = BIN_RED; // ĐỎ
+                    } else if (g > 0.35f && g > r * 1.15f && g > b * 1.10f) {
+                        binIdx = BIN_GREEN; // XANH LỤC
+                    } else if (b > 0.35f && b > r * 1.20f && b > g * 1.05f) {
+                        binIdx = BIN_BLUE; // XANH LAM
+                    } else if (g > 0.30f && b > 0.30f && (g + b) > 1.8f * r && fabsf(g - b) < 0.30f) {
+                        binIdx = BIN_CYAN; // CYAN (Xanh ngọc)
+                    } else if (r > 0.45f && g > 0.38f && b < 0.35f && (r + g) > 2.0f * b) {
+                        binIdx = BIN_YELLOW; // VÀNG
+                    } else if (r > 0.40f && b > 0.40f && g < 0.35f) {
+                        binIdx = BIN_MAGENTA; // TÍM
+                    }
 
-                // Phân loại dải màu (Chroma Bin Classification)
-                KYCColorBinType binIdx = BIN_NONE;
-
-                if (r > 0.40f && r > g * 1.30f && r > b * 1.30f) {
-                    binIdx = BIN_RED; // ĐỎ
-                } else if (g > 0.35f && g > r * 1.20f && g > b * 1.15f) {
-                    binIdx = BIN_GREEN; // XANH LỤC
-                } else if (b > 0.38f && b > r * 1.25f && b > g * 1.05f) {
-                    binIdx = BIN_BLUE; // XANH LAM
-                } else if (g > 0.35f && b > 0.35f && (g + b) > 2.0f * r && fabsf(g - b) < 0.25f) {
-                    binIdx = BIN_CYAN; // CYAN (Xanh ngọc)
-                } else if (r > 0.50f && g > 0.42f && b < 0.32f && (r + g) > 2.2f * b) {
-                    binIdx = BIN_YELLOW; // VÀNG
-                } else if (r > 0.45f && b > 0.45f && g < 0.35f) {
-                    binIdx = BIN_MAGENTA; // TÍM
-                }
-
-                if (binIdx != BIN_NONE) {
-                    bins[binIdx].sumR += r * weight;
-                    bins[binIdx].sumG += g * weight;
-                    bins[binIdx].sumB += b * weight;
-                    bins[binIdx].totalWeight += weight;
-                    bins[binIdx].pixelCount++;
+                    if (binIdx != BIN_NONE) {
+                        bins[binIdx].sumR += r * weight;
+                        bins[binIdx].sumG += g * weight;
+                        bins[binIdx].sumB += b * weight;
+                        bins[binIdx].totalWeight += weight;
+                        bins[binIdx].pixelCount++;
+                    }
                 }
             }
         }
 
-        // Tìm bin màu áp đảo (Dominant Bin)
+        float meanR = (validCount > 0) ? (totalR / validCount) : 0.0f;
+        float meanG = (validCount > 0) ? (totalG / validCount) : 0.0f;
+        float meanB = (validCount > 0) ? (totalB / validCount) : 0.0f;
+        float lum = 0.299f * meanR + 0.587f * meanG + 0.114f * meanB;
+        if (outLum) *outLum = lum;
+
+        // Tìm bin màu có trọng số cao nhất
         KYCColorBinType bestBin = BIN_NONE;
         float maxWeight = 0.0f;
         for (int k = 0; k < BIN_COUNT; k++) {
@@ -397,23 +405,20 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
             }
         }
 
-        // Ngưỡng xác nhận KYC Flash ngoại vi: cần ít nhất 18 điểm ảnh viền bão hòa cao và tổng trọng số > 6.0
-        // (Tránh hoàn toàn việc các icon nhỏ hay viền màu nhẹ kích hoạt nhầm)
-        if (bestBin != BIN_NONE && bins[bestBin].pixelCount >= 18 && maxWeight > 6.0f) {
+        // 1. Nhận diện chớp màu KYC đặc trưng (Red, Green, Blue, Cyan, Yellow, Magenta)
+        if (bestBin != BIN_NONE && bins[bestBin].pixelCount >= 6 && maxWeight > 1.2f) {
             float avgR = bins[bestBin].sumR / bins[bestBin].totalWeight;
             float avgG = bins[bestBin].sumG / bins[bestBin].totalWeight;
             float avgB = bins[bestBin].sumB / bins[bestBin].totalWeight;
 
-            // Tăng cường độ rực màu (Boost Saturation) để phản chiếu lên da mặt rõ nét nhất
+            // Chuẩn hóa độ rực
             float maxC = MAX(avgR, MAX(avgG, avgB));
             if (maxC > 0.01f) {
                 avgR /= maxC;
                 avgG /= maxC;
                 avgB /= maxC;
             }
-
-            float minC = MIN(avgR, MIN(avgG, avgB));
-            float sat = maxC - minC;
+            float sat = maxC - MIN(avgR, MIN(avgG, avgB));
 
             if (outSat) *outSat = sat;
             *outR = avgR;
@@ -422,17 +427,24 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
             if (outColorName) *outColorName = [NSString stringWithUTF8String:kBinNames[bestBin]];
             if (outVotedCount) *outVotedCount = bins[bestBin].pixelCount;
             if (outVotedWeight) *outVotedWeight = maxWeight;
-        } else {
-            // Không có chớp màu đặc biệt (màn hình trung tính, camera preview bình thường, hoặc đang chụp ảnh khuôn mặt)
+        }
+        // 2. Nhận diện chớp sáng trắng / trung tính (White Flash - phổ biến ở app test và KYC flash)
+        else if (lum >= 0.48f) {
             if (outSat) *outSat = 0.0f;
-            if (validSampledCount > 0) {
-                *outR = totalR / validSampledCount;
-                *outG = totalG / validSampledCount;
-                *outB = totalB / validSampledCount;
-            } else {
-                *outR = 1.0f; *outG = 1.0f; *outB = 1.0f;
-            }
-            if (outColorName) *outColorName = @"Trắng/Trung tính";
+            *outR = 1.0f;
+            *outG = 1.0f;
+            *outB = 1.0f;
+            if (outColorName) *outColorName = @"Trắng Flash";
+            if (outVotedCount) *outVotedCount = validCount;
+            if (outVotedWeight) *outVotedWeight = lum * 10.0f;
+        }
+        // 3. Màn hình bình thường (không có flash)
+        else {
+            if (outSat) *outSat = 0.0f;
+            *outR = meanR;
+            *outG = meanG;
+            *outB = meanB;
+            if (outColorName) *outColorName = @"Bình thường";
             if (outVotedCount) *outVotedCount = 0;
             if (outVotedWeight) *outVotedWeight = 0.0f;
         }
@@ -443,22 +455,9 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
     if (_samplingTimer) return;
 
     _monitorStartTime = [NSDate timeIntervalSinceReferenceDate];
-
-    // Reset Rhythm Learner mỗi lần bật lại để học nhịp mới từ đầu
-    _lastFlashOnsetTime     = 0;
-    _prevFlashOnsetTime     = 0;
-    _learnedPeriodSec       = 0;
-    _rhythmSampleCount      = 0;
-    _lastDetectedColorName  = nil;
-    _rhythmInFlashPhase     = NO;
-    _rhythmPhaseStartTime   = 0;
-    _predictedNextFlashTime = 0;
-    _predictionConfidence   = 0.0f;
-
     _samplingTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _samplingQueue);
-    // Tần số quét 120ms (~8 FPS): bắt trúng kể cả các nhịp chớp nhanh 150-200ms của eKYC hiện đại
-    // (tăng từ 320ms cũ lên 120ms - CPU overhead thêm rất nhỏ vì _UICreateScreenUIImage chỉ downscale 24x24)
-    dispatch_source_set_timer(_samplingTimer, DISPATCH_TIME_NOW, 120 * NSEC_PER_MSEC, 15 * NSEC_PER_MSEC);
+    // Tần số quét 25ms (40 FPS): Bắt tức thì mọi nhịp chớp màu màn hình eKYC thời gian thực (< 25ms)
+    dispatch_source_set_timer(_samplingTimer, DISPATCH_TIME_NOW, 25 * NSEC_PER_MSEC, 5 * NSEC_PER_MSEC);
 
     __weak typeof(self) weakSelf = self;
     dispatch_source_set_event_handler(_samplingTimer, ^{
@@ -476,14 +475,6 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
 
 - (void)_sampleTick {
     if (!_isEnabled) return;
-
-    // Tự động tắt sau 90 giây để bảo vệ pin và chống chạy ngầm kéo dài
-    if ([NSDate timeIntervalSinceReferenceDate] - _monitorStartTime > 90.0) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [self setLivenessEnabled:NO];
-        });
-        return;
-    }
 
     if (_isTestMode) {
         // Chế độ test mô phỏng: đảo 6 màu tuần hoàn mỗi 450ms
@@ -507,10 +498,9 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
         float targetG = testPalette[_testColorIndex][1];
         float targetB = testPalette[_testColorIndex][2];
 
-        // Lọc trễ quang học EMA mượt mà
-        _smoothedR = _smoothedR * 0.35f + targetR * 0.65f;
-        _smoothedG = _smoothedG * 0.35f + targetG * 0.65f;
-        _smoothedB = _smoothedB * 0.35f + targetB * 0.65f;
+        _smoothedR = targetR;
+        _smoothedG = targetG;
+        _smoothedB = targetB;
 
         VCAMFlashState s;
         s.active = YES;
@@ -523,8 +513,7 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
         return;
     }
 
-    // Tự động quét màu màn hình app eKYC theo thời gian thực
-    BOOL capturedSuccess = NO;
+    // Tự động quét màu màn hình app eKYC theo thời gian thực (40 FPS)
     if (_uikitCreateScreenUIImage) {
         @autoreleasepool {
             @try {
@@ -532,126 +521,79 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                 if (rawImg) {
                     UIImage *screenImg = (__bridge_transfer UIImage *)rawImg;
                     if (screenImg && screenImg.CGImage) {
-                        capturedSuccess = YES;
-                        _consecutiveCaptureFailures = 0;
-
                         float sampleR = 1.0f, sampleG = 1.0f, sampleB = 1.0f;
                         float saturation = 0.0f;
-                        NSString *detectedColorName = @"Trắng/Trung tính";
+                        float luminance = 0.0f;
+                        NSString *detectedColorName = @"Bình thường";
                         int votedCount = 0;
                         float votedWeight = 0.0f;
 
-                        ComputeDominantScreenRGB(screenImg.CGImage, &sampleR, &sampleG, &sampleB, &saturation, &detectedColorName, &votedCount, &votedWeight);
+                        ComputeDominantScreenRGB(screenImg.CGImage, &sampleR, &sampleG, &sampleB, &saturation, &luminance, &detectedColorName, &votedCount, &votedWeight);
 
-                        // ── Rhythm Learner: Phát hiện flash onset & học chu kỳ chớp ──
-                        BOOL isFlashingNow = (saturation > 0.20f && votedCount >= 12);
+                        BOOL isFlashingNow = NO;
+                        float targetIntensity = 0.0f;
 
-                        // Nhận diện "onset" (bắt đầu chớp mới): khi đổi màu KYC hoặc chuyển từ tối → sáng màu
-                        BOOL isNewFlashOnset = NO;
-                        NSTimeInterval nowSampleTime = [NSDate timeIntervalSinceReferenceDate];
+                        if ([detectedColorName isEqualToString:@"Trắng Flash"] || luminance >= 0.48f) {
+                            // Chớp sáng trắng (White Flash - ví dụ app test chế độ 1s)
+                            isFlashingNow = YES;
+                            float boost = MIN(1.0f, (luminance - 0.35f) / 0.40f);
+                            targetIntensity = (float)_intensity * MAX(0.25f, boost);
+                            sampleR = 1.0f; sampleG = 1.0f; sampleB = 1.0f;
+                        } else if (saturation >= 0.10f && votedCount >= 6) {
+                            // Chớp màu KYC (Color Flash)
+                            isFlashingNow = YES;
+                            float boost = MIN(1.0f, MAX(luminance, saturation * 1.30f));
+                            targetIntensity = (float)_intensity * MAX(0.25f, boost);
+                        } else {
+                            // Màn hình bình thường
+                            isFlashingNow = NO;
+                            targetIntensity = 0.0f;
+                        }
 
+                        // ── BẬT TỨC THÌ (Zero-Lag Snap) khi xuất hiện chớp mới ──
                         if (isFlashingNow) {
-                            // Đổi màu = lần chớp mới (VPBank, MSB thường đổi màu liên tục)
-                            BOOL colorChanged = (_lastDetectedColorName != nil &&
-                                                 ![_lastDetectedColorName isEqualToString:detectedColorName]);
-                            // Hoặc vừa bật lại sau pha tối (pha tối kéo dài > 60ms)
-                            BOOL wasInDark = (!_rhythmInFlashPhase &&
-                                             (nowSampleTime - _rhythmPhaseStartTime) > 0.06);
-
-                            if (colorChanged || wasInDark || _lastFlashOnsetTime == 0) {
-                                isNewFlashOnset = YES;
-                            }
-
-                            _rhythmInFlashPhase = YES;
-                            _lastDetectedColorName = detectedColorName;
-                        } else {
-                            // Pha tối bắt đầu
-                            if (_rhythmInFlashPhase) {
-                                _rhythmInFlashPhase = NO;
-                                _rhythmPhaseStartTime = nowSampleTime;
-                            }
-                        }
-
-                        // Ghi nhận onset và cập nhật chu kỳ học
-                        if (isNewFlashOnset && nowSampleTime > 0) {
-                            if (_lastFlashOnsetTime > 0) {
-                                double measuredPeriod = nowSampleTime - _lastFlashOnsetTime;
-                                // Chỉ học nếu chu kỳ hợp lý (100ms – 2000ms) = range của mọi app KYC thực tế
-                                if (measuredPeriod >= 0.10 && measuredPeriod <= 2.0) {
-                                    if (_learnedPeriodSec == 0) {
-                                        _learnedPeriodSec = measuredPeriod;
-                                    } else {
-                                        // Bộ lọc EMA với alpha = 0.35 (học nhanh nhưng không giật)
-                                        _learnedPeriodSec = _learnedPeriodSec * 0.65 + measuredPeriod * 0.35;
-                                    }
-                                    _rhythmSampleCount++;
-
-                                    // Tính độ tin cậy: tăng tuyến tính theo số mẫu (bão hòa sau 6 mẫu)
-                                    _predictionConfidence = MIN(1.0f, (float)_rhythmSampleCount / 6.0f);
-
-                                    // Dự đoán lần chớp tiếp theo
-                                    _predictedNextFlashTime = nowSampleTime + _learnedPeriodSec;
-                                }
-                            }
-                            _prevFlashOnsetTime = _lastFlashOnsetTime;
-                            _lastFlashOnsetTime = nowSampleTime;
-                        }
-
-                        // ── Tính intensity phản quang kết hợp: thực tế + dự đoán nhịp ──
-                        float effectiveIntensity = 0.0f;
-
-                        if (_isTestMode) {
-                            effectiveIntensity = (float)_intensity;
-                            _smoothedR = _smoothedR * 0.15f + sampleR * 0.85f;
-                            _smoothedG = _smoothedG * 0.15f + sampleG * 0.85f;
-                            _smoothedB = _smoothedB * 0.15f + sampleB * 0.85f;
-                        } else if (isFlashingNow) {
-                            // Màn hình thực sự đang chớp màu KYC → phản quang trực tiếp
-                            NSTimeInterval flashDuration = nowSampleTime - _lastFlashOnsetTime;
-                            float decay = 1.0f;
-                            if (flashDuration > 1.2) {
-                                decay = MAX(0.0f, 1.0f - (float)(flashDuration - 1.2) / 0.5f);
-                            }
-                            effectiveIntensity = (float)_intensity * MIN(1.0f, saturation * 1.35f) * decay;
-                            // EMA nhanh hơn (0.10/0.90) khi 120ms sampling để không lag thị giác
-                            _smoothedR = _smoothedR * 0.10f + sampleR * 0.90f;
-                            _smoothedG = _smoothedG * 0.10f + sampleG * 0.90f;
-                            _smoothedB = _smoothedB * 0.10f + sampleB * 0.90f;
-                        } else if (_predictionConfidence >= 0.5f && _predictedNextFlashTime > 0) {
-                            // ── Chế độ Predictive Pre-light: Dự đoán lần chớp tiếp theo ──
-                            // Nếu đang trong cửa sổ ±60ms xung quanh thời điểm dự đoán → chiếu trước ánh sáng
-                            // (giải quyết hoàn toàn vấn đề camera bỏ lỡ frame chớp nhanh)
-                            double dtToNextFlash = _predictedNextFlashTime - nowSampleTime;
-                            if (dtToNextFlash >= -0.06 && dtToNextFlash <= 0.06) {
-                                // Đang trong cửa sổ dự đoán → chiếu phản quang nhân tạo với màu của lần chớp trước
-                                float predIntensity = (float)_intensity * _predictionConfidence * (float)(1.0 - fabs(dtToNextFlash) / 0.06);
-                                effectiveIntensity = predIntensity;
-                                // Giữ nguyên màu từ lần chớp thực tế gần nhất
+                            if (_smoothedIntensity < 0.05f) {
+                                // Khung hình đầu tiên của cú chớp: BẬT 100% CƯỜNG ĐỘ NGAY TRONG 0MS!
+                                _smoothedR = sampleR;
+                                _smoothedG = sampleG;
+                                _smoothedB = sampleB;
+                                _smoothedIntensity = targetIntensity;
                             } else {
-                                // Ngoài cửa sổ → tắt hoàn toàn
-                                effectiveIntensity = 0.0f;
-                                _smoothedR = _smoothedR * 0.40f + 1.0f * 0.60f;
-                                _smoothedG = _smoothedG * 0.40f + 1.0f * 0.60f;
-                                _smoothedB = _smoothedB * 0.40f + 1.0f * 0.60f;
+                                // Trong suốt cú chớp: bám sát màu màn hình tức thì
+                                _smoothedR = _smoothedR * 0.10f + sampleR * 0.90f;
+                                _smoothedG = _smoothedG * 0.10f + sampleG * 0.90f;
+                                _smoothedB = _smoothedB * 0.10f + sampleB * 0.90f;
+                                _smoothedIntensity = targetIntensity;
                             }
                         } else {
-                            // Trạng thái bình thường / chụp ảnh: TẮT HOÀN TOÀN TINT
-                            effectiveIntensity = 0.0f;
-                            _smoothedR = _smoothedR * 0.40f + 1.0f * 0.60f;
-                            _smoothedG = _smoothedG * 0.40f + 1.0f * 0.60f;
-                            _smoothedB = _smoothedB * 0.40f + 1.0f * 0.60f;
+                            // Khi hết chớp: hạ ánh sáng nhanh trong 2-3 frame (~50-70ms)
+                            _smoothedIntensity = _smoothedIntensity * 0.25f;
+                            if (_smoothedIntensity < 0.02f) {
+                                _smoothedIntensity = 0.0f;
+                            }
+                        }
+
+                        // ── Cập nhật thẳng vào Shared Memory (0ms IPC, không qua file đĩa) ──
+                        VCAMSharedFlashState *shared = VCAMGetSharedFlashState(true);
+                        if (shared) {
+                            shared->active = (_smoothedIntensity > 0.01f) ? 1 : 0;
+                            shared->r = _smoothedR;
+                            shared->g = _smoothedG;
+                            shared->b = _smoothedB;
+                            shared->intensity = _smoothedIntensity;
+                            shared->isColorSync = 0;
+                            shared->sequence++;
+                            shared->timestamp = [NSDate timeIntervalSinceReferenceDate];
                         }
 
                         VCAMFlashState s;
-                        s.active = (effectiveIntensity > 0.01f);
+                        s.active = (_smoothedIntensity > 0.01f);
                         s.testMode = _isTestMode;
                         s.r = _smoothedR;
                         s.g = _smoothedG;
                         s.b = _smoothedB;
-                        s.intensity = effectiveIntensity;
-                        [VCAMFlashLivenessManager saveFlashState:s];
+                        s.intensity = _smoothedIntensity;
 
-                        // Ghi log sự kiện có thay đổi hoặc định kỳ 1.0s vào /var/tmp/vcam_flash.log
                         static NSTimeInterval lastLogTime = 0;
                         static BOOL lastLoggedActive = NO;
                         static NSString *lastLoggedColor = nil;
@@ -662,15 +604,13 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                             lastLoggedActive = s.active;
                             lastLoggedColor = detectedColorName;
                             NSString *logMsg = [NSString stringWithFormat:
-                                @"[KYC Flash] %@ [voted: %d px, w=%.1f] | Active=%s Inten=%.2f | "
-                                 "Sat=%.2f | OutRGB=(%.2f, %.2f, %.2f) | "
-                                 "Rhythm: period=%.0fms conf=%.0f%% samples=%d\n",
-                                detectedColorName, votedCount, votedWeight,
-                                s.active ? "YES" : "NO", effectiveIntensity,
-                                saturation, _smoothedR, _smoothedG, _smoothedB,
-                                _learnedPeriodSec * 1000.0, _predictionConfidence * 100.0,
-                                _rhythmSampleCount];
+                                @"[KYC Flash] %@ [voted: %d px] | Active=%s Inten=%.2f | "
+                                 "Lum=%.2f Sat=%.2f | OutRGB=(%.2f, %.2f, %.2f)\n",
+                                detectedColorName, votedCount,
+                                s.active ? "YES" : "NO", _smoothedIntensity,
+                                luminance, saturation, _smoothedR, _smoothedG, _smoothedB];
                             FILE *lf = fopen("/var/tmp/vcam_flash.log", "a");
+                            if (!lf) lf = fopen("/tmp/vcam_flash.log", "a");
                             if (lf) {
                                 fputs([logMsg UTF8String], lf);
                                 fclose(lf);
@@ -679,59 +619,8 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                         }
                     }
                 }
-            } @catch (__unused NSException *ex) {
-                capturedSuccess = NO;
-            }
-        }
-    }
-
-    // Cơ chế thông minh dự phòng: Nếu hệ điều hành / app chặn đọc màn hình (> 1.5s liên tiếp)
-    if (!capturedSuccess) {
-        _consecutiveCaptureFailures++;
-        if (_consecutiveCaptureFailures > 15) {
-            // Tự động luân chuyển dải màu KYC để đảm bảo luôn có phản quang trên da mặt
-            static const float fallbackPalette[6][3] = {
-                {1.00f, 1.00f, 1.00f}, // Sáng trắng
-                {0.20f, 0.75f, 1.00f}, // Xanh lam
-                {1.00f, 0.25f, 0.25f}, // Đỏ
-                {0.30f, 0.95f, 0.35f}, // Xanh lục
-                {1.00f, 0.90f, 0.20f}, // Vàng
-                {0.90f, 0.30f, 0.90f}  // Tím hồng
-            };
-
-            static NSTimeInterval lastFallbackCycle = 0;
-            NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-            if (now - lastFallbackCycle > 0.45) {
-                lastFallbackCycle = now;
-                _testColorIndex = (_testColorIndex + 1) % 6;
-            }
-
-            float targetR = fallbackPalette[_testColorIndex][0];
-            float targetG = fallbackPalette[_testColorIndex][1];
-            float targetB = fallbackPalette[_testColorIndex][2];
-
-            _smoothedR = _smoothedR * 0.35f + targetR * 0.65f;
-            _smoothedG = _smoothedG * 0.35f + targetG * 0.65f;
-            _smoothedB = _smoothedB * 0.35f + targetB * 0.65f;
-
-            VCAMFlashState s;
-            s.active = YES;
-            s.testMode = YES;
-            s.r = _smoothedR;
-            s.g = _smoothedG;
-            s.b = _smoothedB;
-            s.intensity = (float)_intensity;
-            [VCAMFlashLivenessManager saveFlashState:s];
-
-            static NSTimeInterval lastWarnLog = 0;
-            if (now - lastWarnLog > 2.0) {
-                lastWarnLog = now;
-                FILE *lf = fopen("/var/tmp/vcam_flash.log", "a");
-                if (lf) {
-                    fputs("[KYC Flash Dự Phòng] Chụp màn hình bị chặn bảo mật. Đang tự động đảo dải màu KYC chuẩn.\n", lf);
-                    fclose(lf);
-                    chmod("/var/tmp/vcam_flash.log", 0666);
-                }
+            } @catch (NSException *e) {
+                // Ignore capture exception
             }
         }
     }

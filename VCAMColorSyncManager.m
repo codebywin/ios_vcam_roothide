@@ -4,6 +4,7 @@
 //
 
 #import "VCAMColorSyncManager.h"
+#import "VCAMSharedState.h"
 #import <notify.h>
 #import <sys/stat.h>
 
@@ -202,11 +203,33 @@ static NSString *VCAMGetColorSyncPlistPath(void) {
 }
 
 + (VCAMColorSyncState)currentColorSyncState {
+    VCAMSharedFlashState *shared = VCAMGetSharedFlashState(false);
+    if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
+        VCAMColorSyncState s = [[VCAMColorSyncManager sharedManager] state];
+        s.enabled = (shared->colorSyncActive != 0);
+        s.red = shared->colorSyncR;
+        s.green = shared->colorSyncG;
+        s.blue = shared->colorSyncB;
+        s.intensity = shared->colorSyncIntensity;
+        s.region = (VCAMColorSyncRegion)shared->colorSyncRegion;
+        return s;
+    }
     return [[VCAMColorSyncManager sharedManager] state];
 }
 
 + (void)saveColorSyncState:(VCAMColorSyncState)state {
     [VCAMColorSyncManager sharedManager].state = state;
+    VCAMSharedFlashState *shared = VCAMGetSharedFlashState(true);
+    if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
+        shared->colorSyncActive = state.enabled ? 1 : 0;
+        shared->colorSyncR = state.red;
+        shared->colorSyncG = state.green;
+        shared->colorSyncB = state.blue;
+        shared->colorSyncIntensity = state.intensity;
+        shared->colorSyncRegion = (uint32_t)state.region;
+        shared->colorSyncSequence++;
+        shared->colorSyncTimestamp = [NSDate timeIntervalSinceReferenceDate];
+    }
     NSString *path = VCAMGetColorSyncPlistPath();
     NSDictionary *dict = @{
         @"enabled": @(state.enabled),

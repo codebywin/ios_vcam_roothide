@@ -18,6 +18,7 @@
 #import "VCAMShadingManager.h"
 #import "VCAMColorSyncManager.h"
 #import "VCAMColorPickerView.h"
+#import "VCAMSharedState.h"
 #import <ImageIO/ImageIO.h>
 #include <string.h>
 #include <dlfcn.h>
@@ -1658,8 +1659,10 @@ static void VCamInitSpringBoardHooks(void) {
 
         NSString *processName = NSProcessInfo.processInfo.processName;
         if ([processName isEqualToString:@"mediaserverd"]) {
+            VCAMGetSharedFlashState(false);
             VCamInitMediaServerHooks();
         } else if ([processName isEqualToString:@"SpringBoard"]) {
+            VCAMGetSharedFlashState(true);
             VCamInitSpringBoardHooks();
         }
     }
