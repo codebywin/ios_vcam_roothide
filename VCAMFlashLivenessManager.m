@@ -7,6 +7,7 @@
 #import "VCAMFlashBurstManager.h"
 #import <dlfcn.h>
 #import <sys/stat.h>
+#import <stdatomic.h>
 
 static const char *kVCAMFlashStateFileName = "vcam_flash_state";
 
@@ -90,7 +91,8 @@ typedef CFTypeRef (*UICreateScreenUIImageFunc)(void);
             }
         }
 
-        _isEnabled = NO;
+        NSString *flagPath = [PossibleTmpDirs().firstObject stringByAppendingPathComponent:@"vcam_flash_enabled"];
+        _isEnabled = (access([flagPath UTF8String], F_OK) == 0);
         _isTestMode = NO;
 
         // Rhythm Learner initial state
@@ -103,6 +105,10 @@ typedef CFTypeRef (*UICreateScreenUIImageFunc)(void);
         _rhythmPhaseStartTime   = 0;
         _predictedNextFlashTime = 0;
         _predictionConfidence   = 0.0f;
+
+        if (_isEnabled) {
+            [self startScreenColorMonitoring];
+        }
     }
     return self;
 }
@@ -115,6 +121,14 @@ typedef CFTypeRef (*UICreateScreenUIImageFunc)(void);
 
 - (void)setLivenessEnabled:(BOOL)enabled {
     _isEnabled = enabled;
+    NSString *flagPath = [PossibleTmpDirs().firstObject stringByAppendingPathComponent:@"vcam_flash_enabled"];
+    if (enabled) {
+        FILE *f = fopen([flagPath UTF8String], "w");
+        if (f) { fputs("1", f); fclose(f); chmod([flagPath UTF8String], 0666); }
+    } else {
+        unlink([flagPath UTF8String]);
+    }
+
     VCAMFlashState s = [VCAMFlashLivenessManager currentFlashState];
     s.active = NO;
     s.testMode = _isTestMode;
@@ -458,12 +472,17 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
 
     _monitorStartTime = [NSDate timeIntervalSinceReferenceDate];
     _samplingTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _samplingQueue);
-    // Tần số quét 25ms (40 FPS): Bắt tức thì mọi nhịp chớp màu màn hình eKYC thời gian thực (< 25ms)
-    dispatch_source_set_timer(_samplingTimer, DISPATCH_TIME_NOW, 25 * NSEC_PER_MSEC, 5 * NSEC_PER_MSEC);
+    // Tần số quét 20ms (50 FPS): Bắt tức thì mọi nhịp chớp màu màn hình eKYC thời gian thực
+    dispatch_source_set_timer(_samplingTimer, DISPATCH_TIME_NOW, 20 * NSEC_PER_MSEC, 5 * NSEC_PER_MSEC);
 
     __weak typeof(self) weakSelf = self;
     dispatch_source_set_event_handler(_samplingTimer, ^{
+        static _Atomic(bool) sSamplingBusy = false;
+        if (atomic_exchange(&sSamplingBusy, true)) {
+            return; // Đang bận xử lý frame trước -> DROP NGAY LẬP TỨC để triệt tiêu 100% trễ dồn hàng đợi (Zero Queue Backlog)!
+        }
         [weakSelf _sampleTick];
+        atomic_store(&sSamplingBusy, false);
     });
     dispatch_resume(_samplingTimer);
 }
@@ -552,27 +571,15 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
                             targetIntensity = 0.0f;
                         }
 
-                        // ── BẬT TỨC THÌ (Zero-Lag Snap) khi xuất hiện chớp mới ──
+                        // ── BẬT TỨC THÌ (Zero-Lag 100% Snap) khi xuất hiện chớp mới ──
                         if (isFlashingNow) {
-                            if (_smoothedIntensity < 0.05f) {
-                                // Khung hình đầu tiên của cú chớp: BẬT 100% CƯỜNG ĐỘ NGAY TRONG 0MS!
-                                _smoothedR = sampleR;
-                                _smoothedG = sampleG;
-                                _smoothedB = sampleB;
-                                _smoothedIntensity = targetIntensity;
-                            } else {
-                                // Trong suốt cú chớp: bám sát màu màn hình tức thì
-                                _smoothedR = _smoothedR * 0.10f + sampleR * 0.90f;
-                                _smoothedG = _smoothedG * 0.10f + sampleG * 0.90f;
-                                _smoothedB = _smoothedB * 0.10f + sampleB * 0.90f;
-                                _smoothedIntensity = targetIntensity;
-                            }
+                            _smoothedR = sampleR;
+                            _smoothedG = sampleG;
+                            _smoothedB = sampleB;
+                            _smoothedIntensity = targetIntensity;
                         } else {
-                            // Khi hết chớp: hạ ánh sáng nhanh trong 2-3 frame (~50-70ms)
-                            _smoothedIntensity = _smoothedIntensity * 0.25f;
-                            if (_smoothedIntensity < 0.02f) {
-                                _smoothedIntensity = 0.0f;
-                            }
+                            // Tắt ngay lập tức khi hết chớp để không còn dư ảnh trễ
+                            _smoothedIntensity = 0.0f;
                         }
 
                         // ── Cập nhật thẳng vào Shared Memory (0ms IPC, không qua file đĩa) ──
@@ -652,8 +659,10 @@ static void ComputeDominantScreenRGB(CGImageRef cgImage, float *outR, float *out
             CGFloat innerRadius = MIN(size.width, size.height) * 0.38f; // Lan tỏa đều trán, mắt, má, mũi
             CGFloat outerRadius = MAX(size.width, size.height) * 0.85f; // Tán xạ mềm biên ngoài màn hình
 
-            CIColor *centerColor = [CIColor colorWithRed:r green:g blue:b alpha:intensity * 0.70f];
-            CIColor *outerColor = [CIColor colorWithRed:r green:g blue:b alpha:intensity * 0.06f];
+            // Đảm bảo ánh sáng phản quang rõ ràng, sắc nét và nhận biết tức thì
+            float flashAlpha = MIN(1.0f, intensity * 1.25f);
+            CIColor *centerColor = [CIColor colorWithRed:r green:g blue:b alpha:flashAlpha];
+            CIColor *outerColor = [CIColor colorWithRed:r green:g blue:b alpha:flashAlpha * 0.15f];
 
             CIFilter *radialGradient = [CIFilter filterWithName:@"CIRadialGradient"];
             [radialGradient setValue:[CIVector vectorWithX:centerX Y:centerY] forKey:@"inputCenter"];

@@ -51,9 +51,9 @@ static inline VCAMSharedFlashState *VCAMGetSharedFlashState(bool createIfMissing
     if (sShared) return sShared;
 
     const char *paths[] = {
+        "/rootfs/private/var/tmp/vcam_shared_flash.bin",
         "/var/tmp/vcam_shared_flash.bin",
         "/private/var/tmp/vcam_shared_flash.bin",
-        "/rootfs/private/var/tmp/vcam_shared_flash.bin",
         "/tmp/vcam_shared_flash.bin",
         NULL
     };
