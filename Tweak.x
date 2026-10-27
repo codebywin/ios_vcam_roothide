@@ -1195,7 +1195,6 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
 
 - (void)_menuRotateVideo {
     int next = [[VCAMTransformManager sharedManager] rotate90];
-    [self _hideMenu];
     [self _showToast:[NSString stringWithFormat:@"Đã xoay: %d°", next]];
 }
 
